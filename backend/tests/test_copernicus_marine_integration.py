@@ -124,7 +124,7 @@ class TestCopernicusMarineIntegration(unittest.TestCase):
         self.assertIn("+48h", data["horizon_stats"])
 
     def test_09_simulation_mode_safety_and_determinism(self):
-        """Verify Simulation Mode preserves exact deterministic SIH 26143 results."""
+        """Verify Simulation Mode preserves exact deterministic Seed 26143 results."""
         h_sim = self.client.post("/api/spills/OILTRACE-DEMO-001/hindcast?mode=simulation")
         self.assertEqual(h_sim.status_code, 200)
         h_data = h_sim.json()

@@ -205,22 +205,35 @@ def get_attribution(spill_id: str):
     try:
         from app.api.spills import _resolve_spill_id
         resolved_id = _resolve_spill_id(spill_id, conn)
-        rows = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi WHERE a.spill_id=? ORDER BY a.rank", (resolved_id,)).fetchall()
-        if not rows:
-            rows = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi ORDER BY a.rank").fetchall()
-        if not rows:
-            try:
-                from app.api.spills import _execute_full_analysis
-                _execute_full_analysis(resolved_id)
-            except Exception as e:
-                import logging
-                logging.getLogger("oiltrace.attribution").warning(f"On-demand analysis error: {e}")
-            rows = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi WHERE a.spill_id=? ORDER BY a.rank", (resolved_id,)).fetchall()
-        if not rows:
-            rows = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi ORDER BY a.rank").fetchall()
+        rows = conn.execute("""
+            SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
+            FROM attributions a
+            JOIN vessels v ON a.mmsi=v.mmsi
+            WHERE a.spill_id=?
+            ORDER BY a.rank
+        """, (resolved_id,)).fetchall()
         result = [row_to_dict(r) for r in rows]
         for r in result:
             r["behaviour_observations"] = parse_json(r.get("behaviour_observations_json")) or []
-        return {"spill_id": resolved_id, "vessels": result, "count": len(result)}
+        spill = conn.execute("SELECT data_mode, provenance FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
+        sp_dict = row_to_dict(spill) if spill else {}
+        mode_val = sp_dict.get("data_mode", "simulation")
+        prov_val = sp_dict.get("provenance", "synthetic")
+        return {
+            "spill_id": resolved_id,
+            "vessels": result,
+            "count": len(result),
+            "mode": mode_val,
+            "data_mode": mode_val,
+            "provenance": prov_val,
+            "structured_provenance": {
+                "mode": mode_val,
+                "provenance": prov_val,
+                "source": "OILTRACE_ATTRIBUTION_ENGINE",
+                "scene_id": resolved_id,
+                "processing_version": "1.0.0",
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            }
+        }
     finally:
         conn.close()

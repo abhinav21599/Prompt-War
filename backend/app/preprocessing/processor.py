@@ -18,7 +18,7 @@ class SARPreprocessor:
         self.filter_size = filter_size
         self.version = "1.2.0"
 
-    def validate(self, scene_path: str) -> Dict[str, Any]:
+    def validate(self, scene_path: str, data_mode: str = "simulation") -> Dict[str, Any]:
         """Validate SAR scene file and extract geospatial metadata."""
         if not scene_path:
             raise ValueError("Satellite image path must be provided.")
@@ -44,9 +44,18 @@ class SARPreprocessor:
                         "bands": src.count,
                         "resolution_m": float(src.res[0]) if src.res else 10.0,
                         "source": scene_path,
+                        "data_mode": data_mode,
+                        "provenance": "observed" if data_mode == "real" else "synthetic",
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                if data_mode == "real":
+                    raise ValueError(f"Failed to read real SAR scene GeoTIFF '{scene_path}': {e}")
+
+        if data_mode == "real":
+            raise FileNotFoundError(
+                f"Real SAR scene file not found at '{scene_path}'. "
+                f"Real-Data Mode requires a verified satellite raster file."
+            )
 
         # Deterministic simulation scene metadata fallback
         return {
@@ -63,12 +72,12 @@ class SARPreprocessor:
             "source": "SYNTHETIC_SENTINEL1_SCENE_GENERATOR",
         }
 
-    def preprocess(self, scene_path: str) -> Dict[str, Any]:
+    def preprocess(self, scene_path: str, data_mode: str = "simulation") -> Dict[str, Any]:
         """
         Loads raster data, calibrates DN to sigma0 dB (or ingests calibrated SAR),
         applies speckle filter if enabled, handles NoData, and normalizes to [-1, 1].
         """
-        meta = self.validate(scene_path)
+        meta = self.validate(scene_path, data_mode=data_mode)
         calibrated_db = None
 
         # Check if actual raster file exists on disk
@@ -76,8 +85,9 @@ class SARPreprocessor:
             if scene_path.endswith(".npy"):
                 try:
                     calibrated_db = np.load(scene_path).astype(np.float32)
-                except Exception:
-                    pass
+                except Exception as e:
+                    if data_mode == "real":
+                        raise ValueError(f"Failed to load real numpy raster '{scene_path}': {e}")
             elif scene_path.endswith((".tif", ".tiff")):
                 try:
                     import rasterio
@@ -90,10 +100,18 @@ class SARPreprocessor:
                         # Assume calibration factor A=500 for uncalibrated DN
                         calibrated_db = 10.0 * np.log10(np.maximum(band1**2 / (500.0**2), 1e-7))
                         calibrated_db = np.nan_to_num(calibrated_db, nan=-30.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    if data_mode == "real":
+                        raise ValueError(f"Failed to process real SAR GeoTIFF '{scene_path}': {e}")
 
-        # If calibrated_db could not be loaded from a file, generate the deterministic synthetic SAR scene
+        # In real data mode, fail explicitly if raster could not be loaded
+        if calibrated_db is None and data_mode == "real":
+            raise FileNotFoundError(
+                f"Real SAR raster data unavailable for '{scene_path}'. "
+                f"Real-Data Mode prohibits synthetic fallback."
+            )
+
+        # In simulation mode, generate the deterministic synthetic SAR scene
         if calibrated_db is None:
             synth = generate_synthetic_sar_scene(width=256, height=256, seed=26143)
             calibrated_db = synth["calibrated_db"]
@@ -109,6 +127,9 @@ class SARPreprocessor:
         # Mean sea (-17.5 dB) maps close to 0.0
         normalized = np.clip((filtered_db + 17.5) / 17.5, -1.0, 1.0).astype(np.float32)
 
+        resolved_mode = meta.get("data_mode", data_mode)
+        resolved_prov = meta.get("provenance", "observed" if resolved_mode == "real" else "synthetic")
+
         return {
             "data": normalized,
             "calibrated_db": filtered_db,
@@ -116,6 +137,7 @@ class SARPreprocessor:
             "preprocessing_version": self.version,
             "calibration": "radiometric_sigma0_dB",
             "speckle_filter_applied": self.use_speckle_filter,
-            "data_mode": meta.get("data_mode", "simulation"),
-            "provenance": "synthetic",
+            "data_mode": resolved_mode,
+            "provenance": resolved_prov,
         }
+

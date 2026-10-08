@@ -142,7 +142,7 @@ def get_scene(scene_id: str):
     try:
         row = conn.execute("SELECT * FROM satellite_images WHERE id=?", (scene_id,)).fetchone()
         if not row:
-            return AVAILABLE_MOCK_SCENES[0]
+            raise HTTPException(404, f"Satellite scene '{scene_id}' not found.")
         d = row_to_dict(row)
         d["metadata_json"] = parse_json(d.get("metadata_json"))
         d["bounds_geojson"] = parse_json(d.get("bounds_geojson"))
@@ -162,9 +162,6 @@ def get_scene_raster(scene_id: str):
     p = os.path.join(SCENES_DIR, f"{scene_id}.tif")
     if os.path.exists(p):
         return FileResponse(p, media_type="image/tiff")
-    demo_p = os.path.join(SCENES_DIR, "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif")
-    if os.path.exists(demo_p):
-        return FileResponse(demo_p, media_type="image/tiff")
     raise HTTPException(404, f"Raster asset for {scene_id} not found on server disk.")
 
 @router.get("/{scene_id}/footprint")
@@ -265,12 +262,16 @@ def run_interactive_detection(payload: dict):
     """
     scene_id = payload.get("scene_id", "S1A_IW_GRDH_1SDV_20240315T060000_demo")
     threshold = float(payload.get("threshold", 0.42))
+    data_mode = payload.get("data_mode", "simulation")
 
     detector = SpillDetector(threshold=threshold)
-    det_res = detector.predict(scene_id + ".tif")
+    scene_input = scene_id if scene_id.endswith((".tif", ".tiff", ".png", ".npy")) else f"{scene_id}.tif"
+    det_res = detector.predict(scene_input, data_mode=data_mode)
 
     poly = det_res.get("polygon")
     geom = characterize_polygon(poly) if poly else {}
+    now_ts = datetime.now(timezone.utc).isoformat()
+    prov_val = det_res.get("provenance", "observed" if data_mode == "real" else "synthetic")
 
     return {
         "scene_id": scene_id,
@@ -281,5 +282,16 @@ def run_interactive_detection(payload: dict):
         "geometry": geom,
         "polygon_geojson": poly,
         "centroid": det_res.get("centroid"),
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "mode": data_mode,
+        "data_mode": data_mode,
+        "provenance": prov_val,
+        "structured_provenance": det_res.get("structured_provenance", {
+            "mode": data_mode,
+            "provenance": prov_val,
+            "source": det_res.get("source", detector.model_name),
+            "scene_id": scene_id,
+            "processing_version": det_res.get("preprocessing_version", "1.2.0"),
+            "generated_at": now_ts,
+        }),
+        "timestamp": now_ts,
     }

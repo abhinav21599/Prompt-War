@@ -94,8 +94,8 @@ class RealEnvironmentalProvider(EnvironmentalProvider):
         # 2. Try Open-Meteo Marine Operational
         try:
             from app.integrations.openmeteo_service import openmeteo_service
-            min_lon, min_lat, max_lon, max_lat = bbox if len(bbox) == 4 else (71.5, 14.5, 73.5, 16.5)
-            return openmeteo_service.fetch_current_field(min_lat, max_lat, min_lon, max_lon)
+            effective_bbox = bbox if len(bbox) == 4 else [71.5, 14.5, 73.5, 16.5]
+            return openmeteo_service.fetch_current_field(bbox=effective_bbox)
         except Exception as e:
             logger.error(f"Open-Meteo current service failed: {e}")
 
@@ -112,8 +112,8 @@ class RealEnvironmentalProvider(EnvironmentalProvider):
         # 2. Try Open-Meteo Operational Wind
         try:
             from app.integrations.openmeteo_service import openmeteo_service
-            min_lon, min_lat, max_lon, max_lat = bbox if len(bbox) == 4 else (71.5, 14.5, 73.5, 16.5)
-            return openmeteo_service.fetch_wind_field(min_lat, max_lat, min_lon, max_lon)
+            effective_bbox = bbox if len(bbox) == 4 else [71.5, 14.5, 73.5, 16.5]
+            return openmeteo_service.fetch_wind_field(bbox=effective_bbox)
         except Exception as e:
             logger.error(f"Open-Meteo wind service failed: {e}")
 

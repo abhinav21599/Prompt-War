@@ -69,10 +69,13 @@ class AnalysisService:
             
             self._update_stage(conn, run_id, "DETECTING")
             detector = SpillDetector(model_version=sp.get("model_version", "1.0.0-demo"), threshold=sp.get("model_threshold", 0.42))
-            det_result = detector.predict("S1A_IW_GRDH_1SDV_20240315T060000_demo.tif")
+            scene_to_process = sp.get("satellite_image_path") or sp.get("satellite_image_id") or "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif"
+            if not scene_to_process.endswith((".tif", ".tiff", ".png", ".npy")):
+                scene_to_process = f"{scene_to_process}.tif"
+            det_result = detector.predict(scene_to_process, data_mode=data_mode)
             if det_result["confidence"] < detector.threshold:
                 raise ValueError("Detection confidence is below the configured investigation threshold.")
-            self._log_audit_event(conn, run_id, "detection_completed", {"confidence": det_result["confidence"]})
+            self._log_audit_event(conn, run_id, "detection_completed", {"confidence": det_result["confidence"], "scene": scene_to_process})
 
             # Stage 4: GEOMETRY
             self._update_stage(conn, run_id, "GEOMETRY")
@@ -313,14 +316,25 @@ class AnalysisService:
             self._log_audit_event(conn, run_id, "report_generated", {"report_id": report_id, "data_mode": data_mode})
 
             self._update_stage(conn, run_id, "COMPLETE")
+            structured_prov = {
+                "mode": data_mode,
+                "provenance": prov_val,
+                "source": env_source,
+                "scene_id": sp.get("satellite_image_id") or spill_id,
+                "acquisition_time": sp.get("satellite_acquisition_time"),
+                "processing_version": sp.get("preprocessing_version", "1.2.0"),
+                "generated_at": now,
+            }
             return {
                 "run_id": run_id,
                 "spill_id": spill_id,
                 "status": "completed",
                 "stages_completed": ["VALIDATING", "PREPROCESSING", "DETECTING", "GEOMETRY", "ENVIRONMENT", "HINDCAST", "AIS_FILTERING", "ATTRIBUTION", "FORECAST", "UNCERTAINTY", "REPORT"],
                 "data_mode": data_mode,
+                "mode": data_mode,
                 "provenance": prov_val,
                 "environmental_source": env_source,
+                "structured_provenance": structured_prov,
                 "seed": settings.oiltrace_demo_seed if data_mode == "simulation" else None,
             }
 

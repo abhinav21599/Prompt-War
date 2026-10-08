@@ -10,6 +10,7 @@ import {
 } from "@/data/demoData";
 import type {
   Coordinates,
+  DriftPoint,
   DriftPrediction,
   GlobeSceneData,
   InvestigationScenario,
@@ -245,18 +246,24 @@ export function getSceneImageUrl(sceneId?: string, mode = 'composite'): string {
 
 export const api = {
   async getSpills(): Promise<SpillDetection[]> {
-    const data = await fetchSpills();
-    return data.length ? data.map(toSpillDetection) : demoSpills;
+    const data = await fetchJson<any[]>("/api/spills/");
+    if (!data) {
+      throw new Error("Unable to connect to OilTrace backend service.");
+    }
+    return data.map(toSpillDetection);
   },
 
   async getSpill(id: string): Promise<SpillDetection | null> {
     const data = await fetchSpill(id);
-    return data ? toSpillDetection(data) : demoSpills.find((spill) => spill.id === id) ?? null;
+    if (!data) return null;
+    return toSpillDetection(data);
   },
 
   async getVessels(): Promise<Vessel[]> {
     const data = await fetchJson<any[]>('/api/vessels/');
-    if (!data?.length) return demoVessels;
+    if (!data) {
+      throw new Error("Unable to fetch maritime vessel tracks from backend service.");
+    }
     return data.map((vessel) => ({
       mmsi: String(vessel.mmsi),
       name: vessel.vessel_name || `MMSI ${vessel.mmsi}`,
@@ -271,68 +278,100 @@ export const api = {
   },
 
   async getDriftPrediction(spillId: string): Promise<DriftPrediction | null> {
-    return demoDriftPredictions.find((entry) => entry.spillId === spillId) ?? null;
+    const data = await fetchHindcast(spillId);
+    if (!data) return null;
+    const trajectory = Array.isArray(data.trajectory) ? data.trajectory : [];
+    const path: DriftPoint[] = trajectory.map((pt: any, idx: number) => ({
+      hourOffset: pt.hour_offset ?? pt.time_offset_h ?? idx,
+      position: {
+        lat: pt.lat ?? pt.latitude ?? (pt.coordinates ? pt.coordinates[1] : 15.2),
+        lon: pt.lon ?? pt.longitude ?? (pt.coordinates ? pt.coordinates[0] : 72.4),
+      },
+      uncertaintyKm: pt.uncertainty_km ?? data.spatial_uncertainty_km ?? 3.5,
+    }));
+    return {
+      spillId,
+      horizonHours: data.horizon_hours ?? data.simulation_hours ?? 24,
+      generatedAt: data.generated_at ?? new Date().toISOString(),
+      model: data.model_version ?? 'Lagrangian RK4',
+      path,
+    };
   },
 
   async getPlatformStats(): Promise<PlatformStat[]> {
     const stats = await fetchDashboardStats();
-    if (!stats) return demoPlatformStats;
+    if (!stats) {
+      throw new Error("Failed to load platform operational statistics from backend.");
+    }
     return [
-      { id: 'active-slicks', label: 'Active Slicks', value: String(stats.active_incidents ?? 1), caption: 'Satellite verified' },
-      { id: 'vessels-tracked', label: 'AIS Vessels Tracked', value: String(stats.analyzed_vessels ?? 7), caption: 'Arabian Sea fairway' },
-      { id: 'sar-scenes', label: 'SAR Scenes Ingested', value: String(stats.analyzed_scenes ?? 12), caption: 'Sentinel-1 & EO-04' },
-      { id: 'high-priority', label: 'Attribution Ready', value: String(stats.high_priority_cases ?? 1), caption: 'Multi-factor forensic leads' },
+      { id: 'active-slicks', label: 'Active Slicks', value: String(stats.active_incidents ?? 0), caption: 'Satellite verified' },
+      { id: 'vessels-tracked', label: 'AIS Vessels Tracked', value: String(stats.analyzed_vessels ?? 0), caption: 'Arabian Sea fairway' },
+      { id: 'sar-scenes', label: 'SAR Scenes Ingested', value: String(stats.analyzed_scenes ?? 0), caption: 'Sentinel-1 & EO-04' },
+      { id: 'high-priority', label: 'Attribution Ready', value: String(stats.high_priority_cases ?? 0), caption: 'Multi-factor forensic leads' },
     ];
   },
 
   async getGlobeScene(): Promise<GlobeSceneData> {
-    const [spills, vessels] = await Promise.all([this.getSpills(), this.getVessels()]);
-    const activeSpill = spills[0] || demoSpills[0];
-    const ships: TrackedShip[] = vessels === demoVessels || !vessels.length
-      ? demoTrackedShips
-      : vessels.map((vessel, index) => ({
-          id: vessel.mmsi,
-          name: vessel.name,
-          type: vessel.type,
-          latitude: vessel.position.lat,
-          longitude: vessel.position.lon,
-          route: demoMaritimeRoutes[index % demoMaritimeRoutes.length]?.id || 'RT-ARABIAN-SEA',
-          speed: 0.012 + (index % 5) * 0.002,
-          speedKn: vessel.speedKn || 14,
-        }));
+    const [spills, vessels] = await Promise.all([
+      fetchSpills().then(items => items.map(toSpillDetection)).catch(() => []),
+      fetchJson<any[]>('/api/vessels/').then(items => items || []).catch(() => []),
+    ]);
+    const activeSpill = spills[0];
+    const ships: TrackedShip[] = vessels.map((vessel, index) => ({
+      id: String(vessel.mmsi),
+      name: vessel.vessel_name || `MMSI ${vessel.mmsi}`,
+      type: normalizeVesselType(vessel.vessel_type),
+      latitude: vessel.last_latitude ?? 15.4,
+      longitude: vessel.last_longitude ?? 72.5,
+      route: demoMaritimeRoutes[index % demoMaritimeRoutes.length]?.id || 'RT-ARABIAN-SEA',
+      speed: 0.012 + (index % 5) * 0.002,
+      speedKn: vessel.last_sog_knots || 14,
+    }));
     return {
-      ships,
+      ships: ships.length ? ships : demoTrackedShips,
       routes: demoMaritimeRoutes,
       stations: demoMonitoringStations,
-      target: {
+      target: activeSpill ? {
         id: activeSpill.id,
         label: `${activeSpill.name} (${activeSpill.region})`,
         position: activeSpill.center as Coordinates,
         confidence: activeSpill.confidence,
+      } : {
+        id: "OILTRACE-DEMO-001",
+        label: "Arabian Sea Offshore Corridors",
+        position: { lat: 15.42, lon: 72.68 },
+        confidence: 0.85,
       },
     };
   },
 
   async getInvestigationScenario(): Promise<InvestigationScenario> {
-    const spills = await this.getSpills();
-    const activeSpill = spills[0] || demoSpills[0];
+    const rawSpills = await fetchSpills();
+    if (!rawSpills || !rawSpills.length) {
+      throw new Error("No active oil spill incident records found.");
+    }
+    const spills = rawSpills.map(toSpillDetection);
+    const activeSpill = spills[0];
     const attribution = await fetchAttribution(activeSpill.id);
-    const candidates: VesselCandidate[] = Array.isArray(attribution?.candidates)
-      ? attribution.candidates.map((candidate: any) => ({
-          id: `VSL-${candidate.mmsi}`,
-          name: candidate.vessel_name || `MMSI ${candidate.mmsi}`,
-          mmsi: String(candidate.mmsi),
-          type: normalizeVesselType(candidate.vessel_type),
-          flag: candidate.flag || 'IN',
-          position: {
-            lat: candidate.latitude ?? activeSpill.center.lat,
-            lon: candidate.longitude ?? activeSpill.center.lon,
-          },
-          headingDeg: Math.round(candidate.heading_deg ?? 180),
-          speedKn: Number(candidate.sog_knots ?? 12.5),
-          correlationScore: Number(candidate.final_score ?? candidate.evidence_score ?? 0.75),
-        }))
-      : demoInvestigationScenario.vessels;
+    const candidateList = Array.isArray(attribution?.candidates)
+      ? attribution.candidates
+      : Array.isArray(attribution?.vessels)
+        ? attribution.vessels
+        : [];
+    const candidates: VesselCandidate[] = candidateList.map((candidate: any) => ({
+      id: `VSL-${candidate.mmsi}`,
+      name: candidate.vessel_name || `MMSI ${candidate.mmsi}`,
+      mmsi: String(candidate.mmsi),
+      type: normalizeVesselType(candidate.vessel_type),
+      flag: candidate.flag || 'IN',
+      position: {
+        lat: candidate.latitude ?? activeSpill.center.lat,
+        lon: candidate.longitude ?? activeSpill.center.lon,
+      },
+      headingDeg: Math.round(candidate.heading_deg ?? 180),
+      speedKn: Number(candidate.sog_knots ?? 12.5),
+      correlationScore: Number(candidate.final_score ?? candidate.evidence_score ?? 0.75),
+    }));
     return {
       id: activeSpill.id,
       name: activeSpill.name,

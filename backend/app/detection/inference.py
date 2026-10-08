@@ -46,11 +46,17 @@ class MLInferenceEngine:
         Runs neural network segmentation on a 2D or 3D normalized SAR array [-1, 1].
         """
         t_start = time.perf_counter()
+        out_mode = data_mode if data_mode is not None else ("real" if self.loaded_checkpoint else "simulation")
         
         if normalized_array.ndim == 2:
             h, w = normalized_array.shape
             if self.in_channels == 2:
-                # Synthesize cross-polarization VH channel using cross-pol ratio (~ -7.5 dB)
+                if out_mode == "real":
+                    raise ValueError(
+                        "Dual-polarization (VV+VH) required for real-data AI model inference, "
+                        "but only single-channel data was provided. Real-Data Mode prohibits synthetic VH generation."
+                    )
+                # Synthesize cross-polarization VH channel using cross-pol ratio (~ -7.5 dB) for simulation mode only
                 vh_synth = np.clip(normalized_array - 0.22, -1.0, 1.0)
                 input_arr = np.stack([normalized_array, vh_synth], axis=0) # [2, H, W]
             else:
@@ -60,6 +66,11 @@ class MLInferenceEngine:
             if self.in_channels == 1 and c > 1:
                 input_arr = normalized_array[:1]
             elif self.in_channels == 2 and c == 1:
+                if out_mode == "real":
+                    raise ValueError(
+                        "Dual-polarization (VV+VH) required for real-data AI model inference, "
+                        "but only single-channel data was provided. Real-Data Mode prohibits synthetic VH generation."
+                    )
                 vh_synth = np.clip(normalized_array[0] - 0.22, -1.0, 1.0)
                 input_arr = np.stack([normalized_array[0], vh_synth], axis=0)
             else:
@@ -82,7 +93,6 @@ class MLInferenceEngine:
             confidence = float(np.max(prob_map)) if prob_map.size > 0 else 0.0
 
         elapsed_ms = round((time.perf_counter() - t_start) * 1000, 2)
-        out_mode = data_mode if data_mode is not None else ("real" if self.loaded_checkpoint else "simulation")
         out_prov = "observed" if out_mode == "real" else "synthetic"
 
         return {
@@ -99,11 +109,14 @@ class MLInferenceEngine:
             "model_version": "1.0.0-trained" if self.loaded_checkpoint else "1.0.0-untrained",
             "is_ai_model": True,
             "input_scene_id": scene_id,
+            "mode": out_mode,
             "data_mode": out_mode,
             "provenance": out_prov,
+            "source": f"PyTorch UNet-ResNet34 ({out_mode.upper()})",
             "inference_time_ms": elapsed_ms,
             "height": h,
             "width": w,
             "oil_pixel_count": oil_pixel_count,
         }
+
 

@@ -70,10 +70,7 @@ def _resolve_spill_id(spill_id: str, conn) -> str:
     row = conn.execute("SELECT id FROM oil_spills WHERE id=?", (spill_id,)).fetchone()
     if row:
         return row_get(row, "id", row_get(row, 0, spill_id))
-    if spill_id and (spill_id.upper().startswith("INC-") or spill_id.lower() in ("demo", "latest", "active", "default", "current")):
-        fallback = conn.execute("SELECT id FROM oil_spills WHERE id LIKE ? OR id='OILTRACE-DEMO-001' ORDER BY created_at DESC LIMIT 1", (f"%{spill_id}%",)).fetchone()
-        if fallback:
-            return row_get(fallback, "id", row_get(fallback, 0, spill_id))
+    if spill_id and spill_id.lower() in ("demo", "latest", "active", "default", "current"):
         latest = conn.execute("SELECT id FROM oil_spills ORDER BY created_at DESC LIMIT 1").fetchone()
         if latest:
             return row_get(latest, "id", row_get(latest, 0, spill_id))
@@ -107,9 +104,7 @@ def get_spill_image(spill_id: str):
         sp = row_to_dict(spill)
         img = conn.execute("SELECT * FROM satellite_images WHERE id=?", (sp.get("satellite_image_id"),)).fetchone()
         if not img:
-            img = conn.execute("SELECT * FROM satellite_images ORDER BY created_at DESC LIMIT 1").fetchone()
-        if not img:
-            raise HTTPException(404, "Satellite image unavailable.")
+            raise HTTPException(404, f"Satellite image unavailable for incident {spill_id}.")
         d = row_to_dict(img)
         d["metadata_json"] = parse_json(d.get("metadata_json"))
         d["bounds_geojson"] = parse_json(d.get("bounds_geojson"))
@@ -128,12 +123,8 @@ def get_spill_raster(spill_id: str, mode: str = Query("composite")):
 def get_environment(spill_id: str):
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT * FROM environmental_fields WHERE spill_id=?", (spill_id,)).fetchall()
-        if not rows:
-            # Fallback to general environmental fields if requested with 'real' or 'simulation'
-            rows = conn.execute("SELECT * FROM environmental_fields WHERE data_mode=? OR spill_id LIKE ?", (spill_id, f"%{spill_id}%")).fetchall()
-        if not rows:
-            rows = conn.execute("SELECT * FROM environmental_fields ORDER BY created_at DESC LIMIT 2").fetchall()
+        resolved_id = _resolve_spill_id(spill_id, conn)
+        rows = conn.execute("SELECT * FROM environmental_fields WHERE spill_id=?", (resolved_id,)).fetchall()
         result = []
         for r in rows:
             d = row_to_dict(r)
@@ -148,14 +139,13 @@ def get_environment(spill_id: str):
 def get_environment_currents(spill_id: str):
     conn = get_connection()
     try:
+        resolved_id = _resolve_spill_id(spill_id, conn)
         row = conn.execute(
-            "SELECT * FROM environmental_fields WHERE (spill_id=? OR data_mode=?) AND field_type='current' ORDER BY created_at DESC LIMIT 1",
-            (spill_id, spill_id)
+            "SELECT * FROM environmental_fields WHERE spill_id=? AND field_type='current' ORDER BY created_at DESC LIMIT 1",
+            (resolved_id,)
         ).fetchone()
         if not row:
-            row = conn.execute("SELECT * FROM environmental_fields WHERE field_type='current' ORDER BY created_at DESC LIMIT 1").fetchone()
-        if not row:
-            raise HTTPException(404, "Ocean currents data unavailable.")
+            raise HTTPException(404, f"Ocean currents data unavailable for spill {spill_id}.")
         d = row_to_dict(row)
         d["field_data"] = parse_json(d["field_data_json"])
         return d
@@ -167,14 +157,13 @@ def get_environment_currents(spill_id: str):
 def get_environment_wind(spill_id: str):
     conn = get_connection()
     try:
+        resolved_id = _resolve_spill_id(spill_id, conn)
         row = conn.execute(
-            "SELECT * FROM environmental_fields WHERE (spill_id=? OR data_mode=?) AND field_type='wind' ORDER BY created_at DESC LIMIT 1",
-            (spill_id, spill_id)
+            "SELECT * FROM environmental_fields WHERE spill_id=? AND field_type='wind' ORDER BY created_at DESC LIMIT 1",
+            (resolved_id,)
         ).fetchone()
         if not row:
-            row = conn.execute("SELECT * FROM environmental_fields WHERE field_type='wind' ORDER BY created_at DESC LIMIT 1").fetchone()
-        if not row:
-            raise HTTPException(404, "Wind field data unavailable.")
+            raise HTTPException(404, f"Wind field data unavailable for spill {spill_id}.")
         d = row_to_dict(row)
         d["field_data"] = parse_json(d["field_data_json"])
         return d
@@ -288,23 +277,7 @@ def get_hindcast(spill_id: str):
             (resolved_id, "hindcast")
         ).fetchone()
         if not row:
-            conn.close()
-            try:
-                _execute_full_analysis(resolved_id)
-            except Exception:
-                pass
-            conn = get_connection()
-            row = conn.execute(
-                "SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type=? ORDER BY created_at DESC LIMIT 1",
-                (resolved_id, "hindcast")
-            ).fetchone()
-        if not row:
-            row = conn.execute(
-                "SELECT * FROM particle_trajectories WHERE run_type=? ORDER BY created_at DESC LIMIT 1",
-                ("hindcast",)
-            ).fetchone()
-        if not row:
-            raise HTTPException(404, "No hindcast found.")
+            raise HTTPException(404, f"No hindcast found for incident {spill_id}.")
         d = row_to_dict(row)
         d["particles"] = parse_json(d["particles_json"])
         d["origin_region_geojson"] = parse_json(d["origin_region_geojson"])
@@ -417,23 +390,7 @@ def get_forecast(spill_id: str):
             (resolved_id, "forecast")
         ).fetchone()
         if not row:
-            conn.close()
-            try:
-                _execute_full_analysis(resolved_id)
-            except Exception:
-                pass
-            conn = get_connection()
-            row = conn.execute(
-                "SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type=? ORDER BY created_at DESC LIMIT 1",
-                (resolved_id, "forecast")
-            ).fetchone()
-        if not row:
-            row = conn.execute(
-                "SELECT * FROM particle_trajectories WHERE run_type=? ORDER BY created_at DESC LIMIT 1",
-                ("forecast",)
-            ).fetchone()
-        if not row:
-            raise HTTPException(404, "No forecast found.")
+            raise HTTPException(404, f"No forecast found for incident {spill_id}.")
         d = row_to_dict(row)
         d["particles"] = parse_json(d["particles_json"])
         return d
@@ -453,13 +410,6 @@ def get_spill_vessels(spill_id: str):
             WHERE a.spill_id=?
             ORDER BY a.rank
         """, (resolved_id,)).fetchall()
-        if not attrs:
-            attrs = conn.execute("""
-                SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
-                FROM attributions a
-                JOIN vessels v ON a.mmsi=v.mmsi
-                ORDER BY a.rank
-            """).fetchall()
 
         if attrs:
             result = []
@@ -494,12 +444,6 @@ def get_all_tracks(spill_id: str):
             JOIN vessels v ON t.mmsi=v.mmsi
             WHERE t.spill_id=?
         """, (resolved_id,)).fetchall()
-        if not rows:
-            rows = conn.execute("""
-                SELECT t.*, v.vessel_name, v.vessel_type, v.length_m, v.beam_m, v.draught_m, v.gross_tonnage, v.flag, v.call_sign
-                FROM vessel_tracks t
-                JOIN vessels v ON t.mmsi=v.mmsi
-            """).fetchall()
         result = []
         for r in rows:
             d = row_to_dict(r)
@@ -632,7 +576,10 @@ def _execute_full_analysis_locked(spill_id: str, force: bool = False):
         
         # 1. Detection Step
         detector = SpillDetector(model_version=sp.get("model_version", "1.0.0-demo"), threshold=sp.get("model_threshold", 0.42))
-        det_result = detector.predict("S1A_IW_GRDH_1SDV_20240315T060000_demo.tif")
+        scene_to_process = sp.get("satellite_image_path") or sp.get("satellite_image_id") or "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif"
+        if not scene_to_process.endswith((".tif", ".tiff", ".png", ".npy")):
+            scene_to_process = f"{scene_to_process}.tif"
+        det_result = detector.predict(scene_to_process, data_mode="simulation")
         if det_result["confidence"] < detector.threshold:
             raise HTTPException(422, "Detection confidence is below the configured investigation threshold.")
 

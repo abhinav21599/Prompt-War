@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import numpy as np
 from app.config import settings
@@ -65,18 +66,23 @@ class SpillDetector:
 
         self.demo_detector = DemoThresholdDetector(threshold_db=-23.0)
 
-    def predict(self, scene_input: Any = "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif") -> Dict[str, Any]:
+    def predict(
+        self,
+        scene_input: Any = "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif",
+        data_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Runs oil spill detection on a GeoTIFF path, PNG path, or preprocessed dictionary/array.
-        Returns a rich DetectionResult dictionary.
+        Returns a rich DetectionResult dictionary with explicit mode and provenance.
         """
         start_time = time.perf_counter()
+        target_mode = data_mode or getattr(settings, "default_data_mode", "simulation")
 
         # 1. Preprocessing
         if isinstance(scene_input, dict) and "data" in scene_input:
             prep_result = scene_input
         elif isinstance(scene_input, str):
-            prep_result = self.preprocessor.preprocess(scene_input)
+            prep_result = self.preprocessor.preprocess(scene_input, data_mode=target_mode)
         elif isinstance(scene_input, np.ndarray):
             prep_result = {
                 "data": scene_input,
@@ -87,8 +93,8 @@ class SpillDetector:
                 },
                 "preprocessing_version": "1.2.0",
                 "calibration": "radiometric_sigma0_dB",
-                "data_mode": "simulation",
-                "provenance": "synthetic",
+                "data_mode": target_mode,
+                "provenance": "observed" if target_mode == "real" else "synthetic",
             }
         else:
             raise ValueError(f"Unsupported scene input type: {type(scene_input)}")
@@ -99,13 +105,15 @@ class SpillDetector:
         scene_id = meta.get("scene_id", "OILTRACE-DEMO-001")
 
         # 2. Inference: ML or Classical Fallback
-        input_data_mode = prep_result.get("data_mode", "simulation")
+        input_data_mode = prep_result.get("data_mode", target_mode)
         if self.is_ai_model:
             if self.ml_engine is None and self.has_checkpoint:
                 try:
                     from app.detection.inference import MLInferenceEngine
                     self.ml_engine = MLInferenceEngine(checkpoint_path=self.model_path, threshold=self.threshold)
                 except Exception as e:
+                    if input_data_mode == "real":
+                        raise RuntimeError(f"PyTorch ML inference engine failed to initialize in Real Mode: {e}")
                     print(f"[DETECTOR WARN] Could not initialize PyTorch ML engine: {e}. Falling back to DemoThresholdDetector.")
                     self.ml_engine = None
                     self.is_ai_model = False
@@ -140,8 +148,11 @@ class SpillDetector:
             result["orientation_deg"] = geom.get("orientation_deg", 0.0)
             result["compactness"] = geom.get("compactness", 0.0)
 
-        # 4. Augment with geospatial and pipeline metadata
+        # 4. Augment with geospatial and pipeline metadata & structured provenance
         elapsed_s = round(time.perf_counter() - start_time, 4)
+        now_ts = datetime.now(timezone.utc).isoformat()
+        resolved_prov = "observed" if input_data_mode == "real" else "synthetic"
+
         result["preprocessing_version"] = prep_result.get("preprocessing_version", "1.2.0")
         result["bounds"] = meta.get("bounds")
         result["crs"] = meta.get("crs", "EPSG:4326")
@@ -149,9 +160,20 @@ class SpillDetector:
         result["processing_time"] = elapsed_s
         result["input_scene_id"] = scene_id
         result["model_threshold"] = self.threshold
-        result["seed"] = getattr(settings, "oiltrace_demo_seed", 26143)
+        result["seed"] = getattr(settings, "oiltrace_demo_seed", 26143) if input_data_mode == "simulation" else None
+        result["mode"] = input_data_mode
         result["data_mode"] = input_data_mode
-        result["provenance"] = prep_result.get("provenance", "synthetic")
+        result["provenance"] = prep_result.get("provenance", resolved_prov)
+        result["structured_provenance"] = {
+            "mode": input_data_mode,
+            "provenance": result["provenance"],
+            "source": result.get("source", result.get("model_name", "SpillDetector")),
+            "scene_id": scene_id,
+            "acquisition_time": meta.get("acquisition_time"),
+            "processing_version": result["preprocessing_version"],
+            "generated_at": now_ts,
+        }
 
         return result
+
 
