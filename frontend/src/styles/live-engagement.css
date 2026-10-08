@@ -1,0 +1,268 @@
+/* ── Live Engagement Telemetry Panel Styles ── */
+
+.live-engagement-card {
+  margin: 10px 8px 8px 8px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.85) 0%, rgba(10, 16, 30, 0.95) 100%);
+  border: 1px solid rgba(0, 217, 232, 0.22);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.live-engagement-card:hover {
+  border-color: rgba(0, 217, 232, 0.45);
+  box-shadow: 0 6px 20px rgba(0, 217, 232, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.live-engagement-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.live-badge-stream {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent, #00d9e8);
+  text-transform: uppercase;
+}
+
+.live-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.live-pulse-dot--burst {
+  background: var(--accent, #00d9e8);
+  box-shadow: 0 0 10px rgba(0, 217, 232, 0.9);
+}
+
+.live-stream-selector {
+  display: flex;
+  gap: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 8px;
+}
+
+.live-stream-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
+  font-family: var(--font-mono, monospace);
+  font-size: 8.5px;
+  font-weight: 600;
+  padding: 3px 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.live-stream-btn--active {
+  background: rgba(0, 217, 232, 0.16);
+  color: var(--accent, #00d9e8);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.live-metric-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.live-counter-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.live-counter-num {
+  font-family: var(--font-mono, monospace);
+  font-size: 22px;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.live-counter-unit {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+}
+
+.live-trend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.live-trend-pill--up {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.live-trend-pill--down {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.live-sparkline-container {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  margin: 6px 0;
+  cursor: crosshair;
+}
+
+.live-sparkline-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.live-sparkline-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid var(--accent, #00d9e8);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  color: #f8fafc;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  transform: translate(-50%, -115%);
+  z-index: 10;
+}
+
+.live-stats-subgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.live-substat {
+  display: flex;
+  flex-direction: column;
+}
+
+.live-substat-label {
+  font-size: 8.5px;
+  color: var(--text-disabled, #64748b);
+  text-transform: uppercase;
+  font-family: var(--font-mono, monospace);
+}
+
+.live-substat-val {
+  font-size: 10.5px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary, #cbd5e1);
+}
+
+/* ── Collapsed Rail Micro-Badge ── */
+.live-micro-pill {
+  margin: 8px 4px;
+  padding: 6px 3px;
+  background: var(--surface-2, #1e293b);
+  border: 1px solid rgba(0, 217, 232, 0.25);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.live-micro-pill:hover {
+  background: rgba(0, 217, 232, 0.1);
+  border-color: var(--accent, #00d9e8);
+}
+
+.live-micro-num {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1;
+}
+
+.live-micro-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 7.5px;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+}
+
+/* ── Light Mode Overrides ── */
+[data-theme='light'] .live-engagement-card {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme='light'] .live-engagement-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.12);
+}
+
+[data-theme='light'] .live-stream-selector {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+}
+
+[data-theme='light'] .live-stream-btn--active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+[data-theme='light'] .live-counter-num {
+  color: var(--text-primary);
+}
+
+[data-theme='light'] .live-micro-pill {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+}
+
+[data-theme='light'] .live-micro-num {
+  color: var(--text-primary);
+}
+

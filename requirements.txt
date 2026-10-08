@@ -1,0 +1,43 @@
+# ── OILTRACE AI Backend Requirements ──
+# Fast, lightweight, type-hinted Python dependencies
+
+# Web Framework & API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+httpx>=0.25.0
+requests>=2.31.0
+python-multipart>=0.0.6
+
+# Database & Migration
+sqlalchemy>=2.0.23
+alembic>=1.13.0
+geoalchemy2>=0.14.0
+psycopg2-binary>=2.9.9
+psycopg[binary]>=3.1.0
+
+# Scientific Computation & Data Handling
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+xarray>=2023.10.0
+netCDF4>=1.6.5
+h5netcdf>=1.3.0
+cdsapi>=0.7.0
+
+# Geospatial & Remote Sensing
+shapely>=2.0.2
+geopandas>=0.14.1
+pyproj>=3.6.1
+rasterio>=1.3.9
+
+# Machine Learning & Computer Vision
+torch>=2.1.0
+torchvision>=0.16.0
+opencv-python-headless>=4.8.0
+
+# Testing & Utilities
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+python-dateutil>=2.8.2

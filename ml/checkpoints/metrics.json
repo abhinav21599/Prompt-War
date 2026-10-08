@@ -1,0 +1,42 @@
+{
+  "dataset": "Zenodo Sentinel-1 SAR Oil Spill Dataset (DOIs: 10.5281/zenodo.8346860, 8253899, 13761290)",
+  "architecture": "Dual-Pol VV/VH U-Net (ResNet-34 Encoder)",
+  "in_channels": 2,
+  "overall_test": {
+    "iou": 0.9799,
+    "dice_f1": 0.9898,
+    "precision": 0.9909,
+    "recall": 0.9888,
+    "specificity": 0.9997,
+    "false_positive_rate": 0.0003,
+    "true_positives": 18879,
+    "false_positives": 174,
+    "false_negatives": 214,
+    "true_negatives": 668861
+  },
+  "oil_spill_class": {
+    "test_samples": 15,
+    "iou": 0.9799,
+    "dice_f1": 0.9898,
+    "recall": 0.9888,
+    "precision": 0.9909
+  },
+  "lookalike_class": {
+    "test_samples": 12,
+    "false_positive_rate": 0.0,
+    "specificity": 1.0
+  },
+  "no_oil_clean_sea_class": {
+    "test_samples": 15,
+    "false_positive_rate": 0.0,
+    "specificity": 1.0
+  },
+  "training_time_s": 439.44,
+  "epochs": 3,
+  "train_samples": 80,
+  "val_samples": 24,
+  "test_samples": 42,
+  "seed": 26143,
+  "threshold": 0.42,
+  "checkpoint_file": "models/oiltrace_unet_v1.pt"
+}

@@ -1,0 +1,215 @@
+
+@import './styles/variables.css';
+@import './styles/reset.css';
+@import './styles/components.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * OilTrace AI design system.
+ * Premium satellite-intelligence palette: white and very light blue surfaces,
+ * deep navy type, medium blue accents, and a single controlled orange-red
+ * signal colour reserved for oil-spill indication.
+ * All values are HSL channel triplets consumed via hsl(var(--token)).
+ */
+
+@layer base {
+  :root {
+    --background: 210 45% 99%;
+    --foreground: 214 45% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 214 45% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 214 45% 15%;
+
+    --primary: 212 88% 44%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 214 40% 22%;
+
+    --muted: 210 38% 96%;
+    --muted-foreground: 213 16% 46%;
+
+    --accent: 207 70% 95%;
+    --accent-foreground: 212 88% 36%;
+
+    --destructive: 8 76% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Reserved for oil-spill detection indicators only. */
+    --signal: 14 86% 52%;
+    --signal-foreground: 0 0% 100%;
+
+    --navy: 214 62% 17%;
+    --navy-foreground: 0 0% 100%;
+
+    --border: 210 32% 89%;
+    --input: 210 32% 89%;
+    --ring: 212 88% 44%;
+
+    --surface: 208 46% 97%;
+    --surface-foreground: 214 38% 24%;
+
+    --radius: 0.25rem;
+
+    --grid-line: 210 40% 87%;
+    --gradient-depth: linear-gradient(
+      180deg,
+      hsl(0 0% 100%) 0%,
+      hsl(206 55% 98%) 45%,
+      hsl(208 52% 96%) 100%
+    );
+    --gradient-signal: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0) 0%,
+      hsl(var(--primary) / 0.45) 50%,
+      hsl(var(--primary) / 0) 100%
+    );
+    --shadow-panel: 0 18px 40px -28px hsl(214 60% 28% / 0.3);
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 214 38% 24%;
+    --sidebar-primary: 212 88% 44%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 207 70% 95%;
+    --sidebar-accent-foreground: 212 88% 36%;
+    --sidebar-border: 210 32% 89%;
+    --sidebar-ring: 212 88% 44%;
+  }
+
+  /**
+   * Dark mode: Earth seen from orbit. Deep-space navy surfaces, luminous but
+   * restrained blue accents, no neon and no purple.
+   */
+  .dark {
+    --background: 220 25% 3%;
+    --foreground: 0 0% 98%;
+
+    --card: 220 20% 6%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 220 20% 5%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 187 100% 50%;
+    --primary-foreground: 220 25% 4%;
+
+    --secondary: 220 18% 11%;
+    --secondary-foreground: 210 20% 90%;
+
+    --muted: 220 16% 10%;
+    --muted-foreground: 215 14% 65%;
+
+    --accent: 187 80% 12%;
+    --accent-foreground: 187 100% 65%;
+
+    --destructive: 8 72% 54%;
+    --destructive-foreground: 0 0% 100%;
+
+    --signal: 16 88% 58%;
+    --signal-foreground: 220 25% 4%;
+
+    --navy: 210 20% 92%;
+    --navy-foreground: 220 25% 4%;
+
+    --border: 220 16% 14%;
+    --input: 220 16% 14%;
+    --ring: 187 100% 50%;
+
+    --surface: 220 20% 5%;
+    --surface-foreground: 210 20% 88%;
+
+    --grid-line: 220 16% 12%;
+    --gradient-depth: radial-gradient(
+        130% 110% at 78% 28%,
+        hsl(220 20% 8%) 0%,
+        hsl(220 24% 4%) 45%,
+        hsl(220 30% 2%) 100%
+      );
+    --gradient-signal: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0) 0%,
+      hsl(var(--primary) / 0.55) 50%,
+      hsl(var(--primary) / 0) 100%
+    );
+    --shadow-panel: 0 20px 50px -26px hsl(220 70% 2% / 0.8);
+
+    --sidebar-background: 220 20% 5%;
+    --sidebar-foreground: 210 20% 88%;
+    --sidebar-primary: 205 90% 58%;
+    --sidebar-primary-foreground: 218 58% 6%;
+    --sidebar-accent: 215 34% 14%;
+    --sidebar-accent-foreground: 205 28% 88%;
+    --sidebar-border: 213 30% 17%;
+    --sidebar-ring: 205 90% 58%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image: var(--gradient-depth);
+    /* Keeps light <-> dark switching a smooth fade rather than a hard cut. */
+    transition:
+      background-color 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+      color 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@layer utilities {
+  /* Faint technical coordinate grid used behind hero / scene areas. */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--grid-line) / 0.7) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-line) / 0.7) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+
+  .bg-grid-sm {
+    background-image:
+      linear-gradient(to right, hsl(var(--grid-line) / 0.5) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-line) / 0.5) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .mask-fade-edges {
+    mask-image: radial-gradient(ellipse at center, hsl(0 0% 0%) 20%, transparent 78%);
+  }
+
+  .text-label {
+    @apply font-mono text-[0.6875rem] uppercase tracking-[0.22em] text-muted-foreground;
+  }
+
+  /* Glass panel used by the small floating intelligence readouts. */
+  .hud-panel {
+    @apply border border-border/80 bg-card/70 backdrop-blur-md;
+    transition: var(--transition-smooth);
+  }
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}

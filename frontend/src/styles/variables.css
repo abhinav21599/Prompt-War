@@ -1,0 +1,213 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --theme: dark;
+
+  /* ── Base App & Canvas Surfaces ── */
+  --app-bg:          #030508;
+  --bg-primary:      #07090E;
+  --bg-secondary:    #0B0E15;
+  --bg-tertiary:     #10141D;
+  --surface-1:       #141822;
+  --surface-2:       #191E2A;
+  --surface-3:       #212836;
+
+  /* ── Dedicated Navigation & Workstation Panels ── */
+  --topbar-bg:       #05070C;
+  --topbar-border:   rgba(255, 255, 255, 0.08);
+  --kpi-bg:          #06080D;
+  --kpi-border:      rgba(255, 255, 255, 0.07);
+  --kpi-card-bg:     rgba(11, 14, 21, 0.95);
+  --kpi-card-border: rgba(255, 255, 255, 0.09);
+  --panel-bg:        #080A10;
+  --panel-border:    rgba(255, 255, 255, 0.08);
+  --card-bg:         rgba(13, 16, 24, 0.9);
+  --card-border:     rgba(255, 255, 255, 0.08);
+  --card-hover-bg:   rgba(255, 255, 255, 0.06);
+
+  /* ── Map HUD & Floating Controls ── */
+  --hud-bg:          rgba(8, 10, 15, 0.96);
+  --hud-border:      rgba(255, 255, 255, 0.16);
+  --hud-text:        #FFFFFF;
+  --hud-text-muted:  #E2E8F0;
+
+  /* ── Crisp High-Contrast Borders ── */
+  --border:          rgba(255, 255, 255, 0.12);
+  --border-strong:   rgba(255, 255, 255, 0.22);
+
+  /* ── High-Contrast Readable Typography ── */
+  --text-primary:    #FFFFFF;
+  --text-secondary:  #FFFFFF;
+  --text-muted:      #E2E8F0;
+  --text-disabled:   #CBD5E1;
+
+  /* ── Accents (Restrained Maritime Cyan & Teal) ── */
+  --accent:          #00E5FF;
+  --accent-secondary:#19B8CC;
+  --accent-hover:    #38BDF8;
+  --accent-dim:      rgba(0, 229, 255, 0.16);
+  --accent-pill-border: rgba(0, 229, 255, 0.45);
+
+  /* ── Oil Spill (Observed Warm Orange / Scientific Overlay) ── */
+  --oil:             #FF7A00;
+  --oil-strong:      #F5B82E;
+  --oil-fill:        rgba(255, 122, 0, 0.30);
+  --oil-outline:     #FFB020;
+
+  /* ── Origin / Uncertainty (Reconstructed Violet / Cool Ice Blue) ── */
+  --origin:          #A879FF;
+  --origin-fill:     rgba(168, 121, 255, 0.20);
+  --uncertainty:     #A879FF;
+
+  /* ── Data Provenance ── */
+  --reconstructed:   #A879FF;
+  --predicted:       #8D7CFF;
+  --synthetic:       #8B94A3;
+  --observed:        #FF7A00;
+
+  /* ── Vessel Correlation ── */
+  --corr-high:       #00D9E8;
+  --corr-med-high:   #F5B82E;
+  --corr-med:        #8B94A3;
+  --corr-low:        #546274;
+
+  /* ── Status ── */
+  --status-success:  #19D3A2;
+  --status-warning:  #F5B82E;
+  --status-error:    #FF4D4D;
+  --status-info:     #00D9E8;
+
+  /* ── Mode Indicators ── */
+  --mode-sim:        #8B94A3;
+  --mode-real:       #00D9E8;
+
+  /* ── Typography ── */
+  --font-sans:       'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:       'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* ── Data Provenance Colors (CSS class refs) ── */
+  --prov-observed:      var(--observed);
+  --prov-reconstructed: var(--reconstructed);
+  --prov-predicted:     var(--predicted);
+  --prov-synthetic:     var(--synthetic);
+
+  /* ── Font Sizes ── */
+  --text-xs:   11px;
+  --text-sm:   12px;
+  --text-base: 14px;
+  --text-md:   15px;
+  --text-lg:   17px;
+  --text-xl:   20px;
+  --text-2xl:  26px;
+
+  /* ── Spacing (8px grid) ── */
+  --sp-1: 8px;
+  --sp-2: 16px;
+  --sp-3: 24px;
+  --sp-4: 32px;
+  --sp-5: 40px;
+  --sp-6: 48px;
+
+  /* ── Radius ── */
+  --radius-sm:  2px;
+  --radius:     4px;
+  --radius-md:  6px;
+
+  /* ── Nav ── */
+  --nav-width:     220px;
+  --topbar-height: 52px;
+
+  /* ── Transitions ── */
+  --transition-fast:  150ms ease;
+  --transition-base:  200ms ease;
+  --transition-map:   350ms ease;
+}
+
+/* ── Light Mode Override ── */
+[data-theme='light'] {
+  --theme: light;
+
+  /* ── Base App & Canvas Surfaces ── */
+  --app-bg:          #F1F5F9;
+  --bg-primary:      #FFFFFF;
+  --bg-secondary:    #F8FAFC;
+  --bg-tertiary:     #F1F5F9;
+  --surface-1:       #FFFFFF;
+  --surface-2:       #F8FAFC;
+  --surface-3:       #F1F5F9;
+
+  /* ── Dedicated Navigation & Workstation Panels ── */
+  --topbar-bg:       #FFFFFF;
+  --topbar-border:   #E2E8F0;
+  --kpi-bg:          #F8FAFC;
+  --kpi-border:      #E2E8F0;
+  --kpi-card-bg:     #FFFFFF;
+  --kpi-card-border: #E2E8F0;
+  --panel-bg:        #FFFFFF;
+  --panel-border:    #E2E8F0;
+  --card-bg:         #FFFFFF;
+  --card-border:     #E2E8F0;
+  --card-hover-bg:   rgba(0, 0, 0, 0.03);
+
+  /* ── Map HUD & Floating Controls ── */
+  --hud-bg:          rgba(255, 255, 255, 0.95);
+  --hud-border:      rgba(203, 213, 225, 0.9);
+  --hud-text:        #0F172A;
+  --hud-text-muted:  #64748B;
+
+  /* ── Crisp High-Contrast Borders ── */
+  --border:          #E2E8F0;
+  --border-strong:   #CBD5E1;
+
+  /* ── High-Contrast Readable Typography ── */
+  --text-primary:    #0F172A;
+  --text-secondary:  #334155;
+  --text-muted:      #64748B;
+  --text-disabled:   #94A3B8;
+
+  /* ── Accents ── */
+  --accent:          #0284C7;
+  --accent-secondary:#0EA5E9;
+  --accent-hover:    #0369A1;
+  --accent-dim:      rgba(2, 132, 199, 0.12);
+  --accent-pill-border: rgba(2, 132, 199, 0.35);
+
+  /* ── Oil Spill ── */
+  --oil:             #EA580C;
+  --oil-strong:      #D97706;
+  --oil-fill:        rgba(234, 88, 12, 0.20);
+  --oil-outline:     #F97316;
+
+  /* ── Origin / Uncertainty ── */
+  --origin:          #7C3AED;
+  --origin-fill:     rgba(124, 58, 237, 0.15);
+  --uncertainty:     #7C3AED;
+
+  /* ── Data Provenance ── */
+  --reconstructed:   #7C3AED;
+  --predicted:       #6366F1;
+  --synthetic:       #64748B;
+  --observed:        #EA580C;
+
+  /* ── Vessel Correlation ── */
+  --corr-high:       #0284C7;
+  --corr-med-high:   #D97706;
+  --corr-med:        #64748B;
+  --corr-low:        #94A3B8;
+
+  /* ── Status ── */
+  --status-success:  #059669;
+  --status-warning:  #D97706;
+  --status-error:    #DC2626;
+  --status-info:     #0284C7;
+
+  /* ── Mode Indicators ── */
+  --mode-sim:        #64748B;
+  --mode-real:       #0284C7;
+
+  /* ── Data Provenance Colors (CSS class refs) ── */
+  --prov-observed:      var(--observed);
+  --prov-reconstructed: var(--reconstructed);
+  --prov-predicted:     var(--predicted);
+  --prov-synthetic:     var(--synthetic);
+}
