@@ -576,24 +576,33 @@ def _execute_full_analysis_locked(spill_id: str, force: bool = False):
         
         # 1. Detection Step
         detector = SpillDetector(model_version=sp.get("model_version", "1.0.0-demo"), threshold=sp.get("model_threshold", 0.42))
-        scene_to_process = sp.get("satellite_image_path") or sp.get("satellite_image_id") or "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif"
+        data_mode = sp.get("data_mode", "simulation")
+        scene_to_process = sp.get("satellite_image_path") or sp.get("satellite_image_id")
+        if not scene_to_process:
+            if data_mode == "real":
+                raise HTTPException(404, f"Real satellite image asset not found for spill '{spill_id}'.")
+            scene_to_process = "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif"
         if not scene_to_process.endswith((".tif", ".tiff", ".png", ".npy")):
             scene_to_process = f"{scene_to_process}.tif"
-        det_result = detector.predict(scene_to_process, data_mode="simulation")
+        det_result = detector.predict(scene_to_process, data_mode=data_mode)
         if det_result["confidence"] < detector.threshold:
             raise HTTPException(422, "Detection confidence is below the configured investigation threshold.")
 
         # 2. Geometry Step (Calculated in projected equal-area CRS)
-        poly = parse_json(sp["spill_polygon_geojson"])
-        geom_result = characterize_polygon(poly)
+        poly = det_result.get("polygon_geojson") or parse_json(sp.get("spill_polygon_geojson"))
+        if not poly and data_mode == "real":
+            raise HTTPException(422, f"No valid georeferenced polygon produced for spill '{spill_id}'.")
+        geom_result = characterize_polygon(poly) if poly else {}
+        centroid = det_result.get("centroid_geojson") or ({"type": "Point", "coordinates": [geom_result.get("centroid_lon", 72.68), geom_result.get("centroid_lat", 15.42)]} if geom_result else None)
         conn.execute("""
             UPDATE oil_spills
-            SET area_km2=?, perimeter_km=?, length_km=?, width_km=?, orientation_deg=?, compactness=?, updated_at=?
+            SET area_km2=?, perimeter_km=?, length_km=?, width_km=?, orientation_deg=?, compactness=?, 
+                spill_polygon_geojson=?, centroid_geojson=?, updated_at=?
             WHERE id=?
         """, (
-            geom_result["area_km2"], geom_result["perimeter_km"], geom_result["length_km"],
-            geom_result["width_km"], geom_result["orientation_deg"], geom_result["compactness"],
-            datetime.now(timezone.utc).isoformat(), spill_id
+            geom_result.get("area_km2", 0.0), geom_result.get("perimeter_km", 0.0), geom_result.get("length_km", 0.0),
+            geom_result.get("width_km", 0.0), geom_result.get("orientation_deg", 0.0), geom_result.get("compactness", 0.0),
+            dump_json(poly), dump_json(centroid), datetime.now(timezone.utc).isoformat(), spill_id
         ))
 
         # 3. Hindcast & Forecast

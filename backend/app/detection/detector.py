@@ -135,6 +135,7 @@ class SpillDetector:
                 transform=meta.get("transform"),
                 bounds=meta.get("bounds"),
                 crs=meta.get("crs", "EPSG:4326"),
+                data_mode=input_data_mode,
             )
             result["geometry"] = geom
             result["polygon_geojson"] = geom.get("polygon_geojson")
@@ -152,6 +153,7 @@ class SpillDetector:
         elapsed_s = round(time.perf_counter() - start_time, 4)
         now_ts = datetime.now(timezone.utc).isoformat()
         resolved_prov = "observed" if input_data_mode == "real" else "synthetic"
+        source_path = meta.get("source") or (scene_input if isinstance(scene_input, str) else "memory_array")
 
         result["preprocessing_version"] = prep_result.get("preprocessing_version", "1.2.0")
         result["bounds"] = meta.get("bounds")
@@ -159,6 +161,7 @@ class SpillDetector:
         result["transform"] = meta.get("transform")
         result["processing_time"] = elapsed_s
         result["input_scene_id"] = scene_id
+        result["source_path"] = source_path
         result["model_threshold"] = self.threshold
         result["seed"] = getattr(settings, "oiltrace_demo_seed", 26143) if input_data_mode == "simulation" else None
         result["mode"] = input_data_mode
@@ -168,6 +171,7 @@ class SpillDetector:
             "mode": input_data_mode,
             "provenance": result["provenance"],
             "source": result.get("source", result.get("model_name", "SpillDetector")),
+            "source_path": source_path,
             "scene_id": scene_id,
             "acquisition_time": meta.get("acquisition_time"),
             "processing_version": result["preprocessing_version"],

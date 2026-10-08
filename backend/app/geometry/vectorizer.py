@@ -70,6 +70,7 @@ def vectorize_mask(
     bounds: Optional[Dict[str, float]] = None,
     crs: str = "EPSG:4326",
     min_pixels: int = 20,
+    data_mode: str = "simulation",
 ) -> Dict[str, Any]:
     """
     Vectorizes a 2D binary segmentation mask into a georeferenced GeoJSON polygon
@@ -79,16 +80,24 @@ def vectorize_mask(
 
     # Derive affine transform from bounds if not provided directly
     if transform is None:
-        if bounds:
+        if bounds and bounds.get("min_lon") is not None:
             min_lon, max_lon = bounds["min_lon"], bounds["max_lon"]
             min_lat, max_lat = bounds["min_lat"], bounds["max_lat"]
+            if min_lon >= max_lon or min_lat >= max_lat:
+                if data_mode == "real":
+                    raise ValueError(f"Real-Data Mode: Invalid spatial bounds for vectorization: {bounds}")
+            res_x = (max_lon - min_lon) / w
+            res_y = -(max_lat - min_lat) / h
+            transform = [res_x, 0.0, min_lon, 0.0, res_y, max_lat]
         else:
+            if data_mode == "real":
+                raise ValueError("Real-Data Mode: Georeferenced transform or spatial bounds required for mask vectorization.")
             # Default Arabian Sea offshore demo bounds
             min_lon, max_lon = 72.35, 73.05
             min_lat, max_lat = 15.15, 15.65
-        res_x = (max_lon - min_lon) / w
-        res_y = -(max_lat - min_lat) / h
-        transform = [res_x, 0.0, min_lon, 0.0, res_y, max_lat]
+            res_x = (max_lon - min_lon) / w
+            res_y = -(max_lat - min_lat) / h
+            transform = [res_x, 0.0, min_lon, 0.0, res_y, max_lat]
 
     # Try rasterio.features.shapes if rasterio is available
     polygons = []

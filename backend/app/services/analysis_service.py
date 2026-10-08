@@ -69,7 +69,11 @@ class AnalysisService:
             
             self._update_stage(conn, run_id, "DETECTING")
             detector = SpillDetector(model_version=sp.get("model_version", "1.0.0-demo"), threshold=sp.get("model_threshold", 0.42))
-            scene_to_process = sp.get("satellite_image_path") or sp.get("satellite_image_id") or "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif"
+            scene_to_process = sp.get("satellite_image_path") or sp.get("satellite_image_id")
+            if not scene_to_process:
+                if data_mode == "real":
+                    raise ValueError(f"Real-Data Mode: Satellite scene asset path not found for spill '{spill_id}'.")
+                scene_to_process = "S1A_IW_GRDH_1SDV_20240315T060000_demo.tif"
             if not scene_to_process.endswith((".tif", ".tiff", ".png", ".npy")):
                 scene_to_process = f"{scene_to_process}.tif"
             det_result = detector.predict(scene_to_process, data_mode=data_mode)
@@ -77,16 +81,21 @@ class AnalysisService:
                 raise ValueError("Detection confidence is below the configured investigation threshold.")
             self._log_audit_event(conn, run_id, "detection_completed", {"confidence": det_result["confidence"], "scene": scene_to_process})
 
-            # Stage 4: GEOMETRY
+            # Stage 4: GEOMETRY (Calculated from raster-detected geometry)
             self._update_stage(conn, run_id, "GEOMETRY")
-            poly = parse_json(sp["spill_polygon_geojson"])
-            geom = characterize_polygon(poly)
+            poly = det_result.get("polygon_geojson") or parse_json(sp.get("spill_polygon_geojson"))
+            if not poly and data_mode == "real":
+                raise ValueError(f"Real-Data Mode: No valid georeferenced polygon produced for spill '{spill_id}'.")
+            geom = characterize_polygon(poly) if poly else {}
+            centroid = det_result.get("centroid_geojson") or ({"type": "Point", "coordinates": [geom.get("centroid_lon", 72.68), geom.get("centroid_lat", 15.42)]} if geom else None)
             conn.execute("""
                 UPDATE oil_spills
-                SET area_km2=?, perimeter_km=?, length_km=?, width_km=?, orientation_deg=?, compactness=?, updated_at=?
+                SET area_km2=?, perimeter_km=?, length_km=?, width_km=?, orientation_deg=?, compactness=?, 
+                    spill_polygon_geojson=?, centroid_geojson=?, updated_at=?
                 WHERE id=?
-            """, (geom["area_km2"], geom["perimeter_km"], geom["length_km"], geom["width_km"],
-                  geom["orientation_deg"], geom["compactness"], now, spill_id))
+            """, (geom.get("area_km2", 0.0), geom.get("perimeter_km", 0.0), geom.get("length_km", 0.0), geom.get("width_km", 0.0),
+                  geom.get("orientation_deg", 0.0), geom.get("compactness", 0.0), 
+                  dump_json(poly), dump_json(centroid), now, spill_id))
             self._log_audit_event(conn, run_id, "geometry_completed", geom)
 
             # Persist alert linked to incident and pipeline run

@@ -136,7 +136,7 @@ def search_satellite_scenes(payload: dict):
 @router.get("/{scene_id}")
 def get_scene(scene_id: str):
     for s in AVAILABLE_MOCK_SCENES:
-        if s["id"] == scene_id or scene_id in s["id"]:
+        if s["id"] == scene_id:
             return s
     conn = get_connection()
     try:
@@ -260,9 +260,13 @@ def run_interactive_detection(payload: dict):
     Executes the deep learning detection pipeline on the specified satellite scene,
     extracts the geodesic polygon characterization, and returns updated metrics.
     """
-    scene_id = payload.get("scene_id", "S1A_IW_GRDH_1SDV_20240315T060000_demo")
-    threshold = float(payload.get("threshold", 0.42))
     data_mode = payload.get("data_mode", "simulation")
+    scene_id = payload.get("scene_id")
+    if not scene_id:
+        if data_mode == "real":
+            raise HTTPException(400, "scene_id must be provided in Real-Data Mode.")
+        scene_id = "S1A_IW_GRDH_1SDV_20240315T060000_demo"
+    threshold = float(payload.get("threshold", 0.42))
 
     detector = SpillDetector(threshold=threshold)
     scene_input = scene_id if scene_id.endswith((".tif", ".tiff", ".png", ".npy")) else f"{scene_id}.tif"

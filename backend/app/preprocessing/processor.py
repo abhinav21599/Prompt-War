@@ -28,15 +28,27 @@ class SARPreprocessor:
             try:
                 import rasterio
                 with rasterio.open(scene_path) as src:
+                    if data_mode == "real":
+                        if not src.crs or str(src.crs).strip() == "":
+                            raise ValueError(f"Real SAR scene '{scene_path}' is missing valid CRS (Coordinate Reference System).")
+                        if not src.transform or src.transform[0] == 0.0 or src.transform[4] == 0.0:
+                            raise ValueError(f"Real SAR scene '{scene_path}' is missing valid geotransform.")
+                        if src.width <= 0 or src.height <= 0:
+                            raise ValueError(f"Real SAR scene '{scene_path}' has invalid raster dimensions: {src.width}x{src.height}.")
+                        if src.bounds.left >= src.bounds.right or src.bounds.bottom >= src.bounds.top:
+                            raise ValueError(f"Real SAR scene '{scene_path}' has invalid or empty spatial bounds.")
+
                     bounds = {
                         "min_lon": float(src.bounds.left),
                         "min_lat": float(src.bounds.bottom),
                         "max_lon": float(src.bounds.right),
                         "max_lat": float(src.bounds.top),
                     }
+                    scene_id = os.path.splitext(os.path.basename(scene_path))[0]
                     return {
                         "valid": True,
-                        "crs": str(src.crs),
+                        "scene_id": scene_id,
+                        "crs": str(src.crs) if src.crs else "EPSG:4326",
                         "transform": list(src.transform)[:6],
                         "bounds": bounds,
                         "width": src.width,
@@ -49,6 +61,8 @@ class SARPreprocessor:
                     }
             except Exception as e:
                 if data_mode == "real":
+                    if isinstance(e, (ValueError, FileNotFoundError)):
+                        raise
                     raise ValueError(f"Failed to read real SAR scene GeoTIFF '{scene_path}': {e}")
 
         if data_mode == "real":
@@ -58,8 +72,10 @@ class SARPreprocessor:
             )
 
         # Deterministic simulation scene metadata fallback
+        scene_id = os.path.splitext(os.path.basename(scene_path))[0] if scene_path else "S1A_IW_GRDH_1SDV_20240315T060000_demo"
         return {
             "valid": True,
+            "scene_id": scene_id,
             "crs": "EPSG:4326",
             "transform": [0.002734, 0.0, 72.35, 0.0, -0.001953, 15.65],
             "bounds": {"min_lon": 72.35, "min_lat": 15.15, "max_lon": 73.05, "max_lat": 15.65},
@@ -69,7 +85,7 @@ class SARPreprocessor:
             "resolution_m": 10.0,
             "data_mode": "simulation",
             "provenance": "synthetic",
-            "source": "SYNTHETIC_SENTINEL1_SCENE_GENERATOR",
+            "source": scene_path or "SYNTHETIC_SENTINEL1_SCENE_GENERATOR",
         }
 
     def preprocess(self, scene_path: str, data_mode: str = "simulation") -> Dict[str, Any]:
@@ -113,9 +129,15 @@ class SARPreprocessor:
 
         # In simulation mode, generate the deterministic synthetic SAR scene
         if calibrated_db is None:
+            req_scene_id = meta.get("scene_id")
+            req_source = meta.get("source")
             synth = generate_synthetic_sar_scene(width=256, height=256, seed=26143)
             calibrated_db = synth["calibrated_db"]
-            meta = synth["metadata"]
+            meta = {
+                **synth["metadata"],
+                "scene_id": req_scene_id or synth["metadata"].get("scene_id", "OILTRACE-DEMO-001"),
+                "source": req_source or synth["metadata"].get("source", scene_path),
+            }
 
         # Optional speckle filtering (uniform box or median)
         if self.use_speckle_filter:

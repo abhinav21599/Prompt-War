@@ -93,6 +93,75 @@ class TestProvenanceAndModeHardening(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["data_mode"], "simulation")
 
+    def test_f_requested_scene_is_actually_used_and_tracked(self):
+        """Test F: Exact requested scene ID and source path are tracked in detection and inference metadata."""
+        detector = SpillDetector()
+        mock_scene_id = "S1B_IW_GRDH_1SDV_20240310T053000_clean"
+        res = detector.predict(f"{mock_scene_id}.tif", data_mode="simulation")
+        self.assertEqual(res["input_scene_id"], mock_scene_id)
+        self.assertIn("structured_provenance", res)
+        self.assertEqual(res["structured_provenance"]["scene_id"], mock_scene_id)
+        self.assertIn(mock_scene_id, res["structured_provenance"]["source_path"])
+
+    def test_g_invalid_georeferencing_fails_in_real_mode(self):
+        """Test G: Real mode vectorization rejects missing or invalid geotransform/bounds."""
+        from app.geometry.vectorizer import vectorize_mask
+        mask = np.ones((64, 64), dtype=np.uint8)
+        # In real mode with no transform or bounds, must fail explicitly
+        with self.assertRaises(ValueError) as ctx:
+            vectorize_mask(mask, transform=None, bounds=None, data_mode="real")
+        self.assertIn("Georeferenced transform or spatial bounds required", str(ctx.exception))
+
+        # In real mode with invalid spatial bounds (e.g. min_lon >= max_lon)
+        with self.assertRaises(ValueError) as ctx:
+            vectorize_mask(mask, transform=None, bounds={"min_lon": 75.0, "max_lon": 72.0, "min_lat": 15.0, "max_lat": 16.0}, data_mode="real")
+        self.assertIn("Invalid spatial bounds", str(ctx.exception))
+
+    def test_h_geometry_output_geographically_valid(self):
+        """Test H: Geometry output is geographically valid when georeferencing exists."""
+        from app.geometry.vectorizer import vectorize_mask
+        from app.geometry.calculator import characterize_polygon
+        mask = np.zeros((100, 100), dtype=np.uint8)
+        mask[20:50, 30:70] = 1
+        transform = [0.001, 0.0, 72.0, 0.0, -0.001, 16.0]
+        geom = vectorize_mask(mask, transform=transform, data_mode="real")
+        self.assertIn("polygon_geojson", geom)
+        self.assertGreater(geom["area_km2"], 0.0)
+        self.assertGreater(geom["perimeter_km"], 0.0)
+        self.assertGreater(geom["compactness"], 0.0)
+        self.assertLessEqual(geom["compactness"], 1.0)
+        self.assertGreaterEqual(geom["centroid_lon"], 72.0)
+        self.assertLessEqual(geom["centroid_lat"], 16.0)
+
+    def test_i_no_hardcoded_demo_scene_in_real_pipeline(self):
+        """Test I: AnalysisService in REAL mode fails if scene asset is missing and never falls back to demo tif."""
+        from app.services.analysis_service import AnalysisService
+        from app.database.engine import get_connection
+        conn = get_connection()
+        try:
+            # Create a mock real incident with missing satellite image asset
+            conn.execute("""
+                INSERT OR REPLACE INTO oil_spills (id, incident_name, status, data_mode, provenance, created_at, updated_at)
+                VALUES ('REAL-SPILL-TEST-001', 'Test Real Spill', 'active', 'real', 'observed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+            """)
+            conn.commit()
+            service = AnalysisService()
+            with self.assertRaises(Exception) as ctx:
+                service.run_pipeline("REAL-SPILL-TEST-001", data_mode="real")
+            # Should fail due to missing satellite scene or missing operational data, not silently run demo tif
+            self.assertTrue(
+                "Satellite scene asset path not found" in str(ctx.exception) or
+                "not found" in str(ctx.exception) or
+                "Real" in str(ctx.exception)
+            )
+        finally:
+            conn.execute("DELETE FROM audit_log WHERE analysis_run_id LIKE '%REAL-SPILL-TEST-001%'")
+            conn.execute("DELETE FROM analysis_runs WHERE spill_id='REAL-SPILL-TEST-001'")
+            conn.execute("DELETE FROM oil_spills WHERE id='REAL-SPILL-TEST-001'")
+            conn.commit()
+            conn.close()
+
 
 if __name__ == '__main__':
     unittest.main()
+
