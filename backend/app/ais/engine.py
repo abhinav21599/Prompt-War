@@ -22,6 +22,67 @@ def parse_dt(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
+def mean_track_bearing(observations: List[Dict]) -> Optional[float]:
+    """Return a distance-weighted, date-line-safe mean bearing for an AIS track.
+
+    Bearings are clockwise from north (0° north, 90° east). Longitude deltas
+    are wrapped to the shortest arc, and east-west displacement is adjusted by
+    cosine of mean latitude. Invalid points are ignored. None means there is
+    insufficient or internally cancelling directional evidence.
+    """
+    positions = []
+    for obs in observations:
+        try:
+            timestamp = parse_dt(obs["timestamp"])
+            lat = float(obs["latitude"])
+            lon = float(obs["longitude"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+
+        if not isinstance(timestamp, datetime):
+            continue
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+            continue
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            continue
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            timestamp = timestamp.astimezone(timezone.utc)
+        positions.append((timestamp, lat, lon))
+
+    positions.sort(key=lambda item: item[0])
+    if len(positions) < 2:
+        return None
+
+    sum_sin = 0.0
+    sum_cos = 0.0
+    total_weight = 0.0
+    for (_, lat1, lon1), (_, lat2, lon2) in zip(positions, positions[1:]):
+        # Wrap the delta to [-180, 180): a crossing at the date line is a short
+        # segment, not a nearly global journey in the opposite direction.
+        delta_lon_deg = (lon2 - lon1 + 180.0) % 360.0 - 180.0
+        mean_lat_rad = math.radians((lat1 + lat2) / 2.0)
+        north_rad = math.radians(lat2 - lat1)
+        east_rad = math.radians(delta_lon_deg) * math.cos(mean_lat_rad)
+        segment_weight = math.hypot(east_rad, north_rad)
+        if segment_weight <= 1e-12:
+            continue
+
+        bearing_rad = math.atan2(east_rad, north_rad)
+        sum_sin += segment_weight * math.sin(bearing_rad)
+        sum_cos += segment_weight * math.cos(bearing_rad)
+        total_weight += segment_weight
+
+    if total_weight <= 1e-12:
+        return None
+    # An almost-zero resultant means opposing track directions cancel; a mean
+    # direction would be arbitrary, so report it as indeterminate instead.
+    if math.hypot(sum_sin, sum_cos) / total_weight <= 1e-6:
+        return None
+    return math.degrees(math.atan2(sum_sin, sum_cos)) % 360.0
+
+
 def spatial_filter(
     observations: List[Dict],
     origin_lat: float,
@@ -66,10 +127,20 @@ def temporal_filter(
     }
 
 
-def _oil_transport_direction(current_u: float, current_v: float, wind_u: float, wind_v: float, alpha: float = 0.03) -> float:
-    eff_u = current_u + alpha * wind_u
-    eff_v = current_v + alpha * wind_v
-    return math.degrees(math.atan2(eff_u, eff_v)) % 360
+def _oil_transport_direction(
+    current_u: float, current_v: float, wind_u: float, wind_v: float, alpha: float = 0.03
+) -> Optional[float]:
+    """Return effective drift bearing, or None when forcing is indeterminate."""
+    try:
+        eff_u = float(current_u) + float(alpha) * float(wind_u)
+        eff_v = float(current_v) + float(alpha) * float(wind_v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not (math.isfinite(eff_u) and math.isfinite(eff_v)):
+        return None
+    if math.hypot(eff_u, eff_v) <= 1e-9:
+        return None
+    return math.degrees(math.atan2(eff_u, eff_v)) % 360.0
 
 
 def trajectory_filter(
@@ -83,20 +154,28 @@ def trajectory_filter(
 ) -> Tuple[Dict[str, List[Dict]], Dict]:
     oil_dir = _oil_transport_direction(current_u, current_v, wind_u, wind_v, alpha)
     passed = {}
-    stats = {"input_count": 0, "output_count": 0, "removed_count": 0,
-             "oil_transport_direction_deg": round(oil_dir, 2), "max_angle_deg": max_angle_deg}
+    stats = {
+        "input_count": 0,
+        "output_count": 0,
+        "removed_count": 0,
+        "indeterminate_count": 0,
+        "oil_transport_direction_deg": round(oil_dir, 2) if oil_dir is not None else None,
+        "max_angle_deg": max_angle_deg,
+    }
 
     for mmsi, obs_list in observations_by_vessel.items():
         stats["input_count"] += 1
-        if len(obs_list) < 2:
+        vessel_dir = mean_track_bearing(obs_list)
+
+        # Missing/zero forcing or a directionless track is not negative evidence.
+        # Keep this candidate for spatial, temporal and other evidence stages.
+        if oil_dir is None or vessel_dir is None:
+            passed[mmsi] = obs_list
+            stats["output_count"] += 1
+            stats["indeterminate_count"] += 1
             continue
-        first = obs_list[0]
-        last = obs_list[-1]
-        vessel_dir = math.degrees(math.atan2(
-            last["longitude"] - first["longitude"],
-            last["latitude"] - first["latitude"]
-        )) % 360
-        angle_diff = abs((vessel_dir - oil_dir + 180) % 360 - 180)
+
+        angle_diff = abs((vessel_dir - oil_dir + 180.0) % 360.0 - 180.0)
         if angle_diff <= max_angle_deg:
             passed[mmsi] = obs_list
             stats["output_count"] += 1

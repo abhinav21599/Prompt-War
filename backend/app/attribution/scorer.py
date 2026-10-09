@@ -71,25 +71,30 @@ def compute_heading_score(
     wind_u: float, wind_v: float,
     alpha: float = 0.03,
 ) -> float:
-    if len(observations) < 2:
-        return 0.0
-    eff_u = current_u + alpha * wind_u
-    eff_v = current_v + alpha * wind_v
-    oil_dir = math.degrees(math.atan2(eff_u, eff_v)) % 360
+    """Compare vessel direction with surface drift; neutralize missing evidence.
 
-    ship_dirs = []
-    sorted_obs = sorted(observations, key=lambda x: x["timestamp"])
-    for i in range(len(sorted_obs) - 1):
-        dlat = sorted_obs[i+1]["latitude"] - sorted_obs[i]["latitude"]
-        dlon = sorted_obs[i+1]["longitude"] - sorted_obs[i]["longitude"]
-        if abs(dlat) + abs(dlon) > 1e-6:
-            d = math.degrees(math.atan2(dlon, dlat)) % 360
-            ship_dirs.append(d)
+    Returns a score in [0, 1]. A score of 0.5 is deliberately neutral when the
+    environmental vector or vessel direction is indeterminate.
+    """
+    from app.ais.engine import mean_track_bearing
 
-    if not ship_dirs:
+    try:
+        eff_u = float(current_u) + float(alpha) * float(wind_u)
+        eff_v = float(current_v) + float(alpha) * float(wind_v)
+    except (TypeError, ValueError, OverflowError):
         return 0.5
-    ship_dir_mean = sum(ship_dirs) / len(ship_dirs)
-    angle_diff = abs((ship_dir_mean - oil_dir + 180) % 360 - 180)
+    if not (math.isfinite(eff_u) and math.isfinite(eff_v)):
+        return 0.5
+    if math.hypot(eff_u, eff_v) <= 1e-9:
+        return 0.5
+
+    # u is eastward and v northward; atan2(u, v) gives a compass bearing.
+    oil_dir = math.degrees(math.atan2(eff_u, eff_v)) % 360.0
+    ship_dir = mean_track_bearing(observations)
+    if ship_dir is None:
+        return 0.5
+
+    angle_diff = abs((ship_dir - oil_dir + 180.0) % 360.0 - 180.0)
     return max(0.0, min(1.0, 1.0 - angle_diff / 180.0))
 
 
