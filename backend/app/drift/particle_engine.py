@@ -21,31 +21,49 @@ def latlon_offset(lat: float, lon: float, u_ms: float, v_ms: float, dt_s: float)
 
 
 def rk4_step(
-    lat: float, lon: float, current_data: Dict, wind_data: Dict,
-    windage_alpha: float, dt_s: float, direction: int = 1
+    lat: float,
+    lon: float,
+    current_data: Dict,
+    wind_data: Dict,
+    windage_alpha: float,
+    dt_s: float,
+    direction: int = 1,
+    current_time: Optional[datetime] = None,
 ) -> Tuple[float, float]:
     if not current_data:
         raise ValueError("Current data unavailable for this time/location.")
     if not wind_data:
         raise ValueError("Wind data unavailable for this time/location.")
 
-    def velocity(la, lo):
-        cu, cv = interpolate_field(la, lo, current_data)
-        wu, wv = interpolate_field(la, lo, wind_data)
+    def velocity(la: float, lo: float, t: Optional[datetime]) -> Tuple[float, float]:
+        cu, cv = interpolate_field(la, lo, current_data, target_time=t)
+        wu, wv = interpolate_field(la, lo, wind_data, target_time=t)
         u_eff = (cu + windage_alpha * wu) * direction
         v_eff = (cv + windage_alpha * wv) * direction
         return u_eff, v_eff
 
-    u1, v1 = velocity(lat, lon)
-    lat2, lon2 = latlon_offset(lat, lon, u1, v1, dt_s / 2)
-    u2, v2 = velocity(lat2, lon2)
-    lat3, lon3 = latlon_offset(lat, lon, u2, v2, dt_s / 2)
-    u3, v3 = velocity(lat3, lon3)
-    lat4, lon4 = latlon_offset(lat, lon, u3, v3, dt_s)
-    u4, v4 = velocity(lat4, lon4)
+    # Stage 1: t1 = current_time
+    t1 = current_time
+    u1, v1 = velocity(lat, lon, t1)
 
-    u_avg = (u1 + 2*u2 + 2*u3 + u4) / 6
-    v_avg = (v1 + 2*v2 + 2*v3 + v4) / 6
+    # Stage 2: t2 = current_time + direction * (dt_s / 2)
+    dt_half = dt_s / 2.0
+    lat2, lon2 = latlon_offset(lat, lon, u1, v1, dt_half)
+    t2 = (current_time + timedelta(seconds=direction * dt_half)) if current_time else None
+    u2, v2 = velocity(lat2, lon2, t2)
+
+    # Stage 3: t3 = current_time + direction * (dt_s / 2)
+    lat3, lon3 = latlon_offset(lat, lon, u2, v2, dt_half)
+    t3 = (current_time + timedelta(seconds=direction * dt_half)) if current_time else None
+    u3, v3 = velocity(lat3, lon3, t3)
+
+    # Stage 4: t4 = current_time + direction * dt_s
+    lat4, lon4 = latlon_offset(lat, lon, u3, v3, dt_s)
+    t4 = (current_time + timedelta(seconds=direction * dt_s)) if current_time else None
+    u4, v4 = velocity(lat4, lon4, t4)
+
+    u_avg = (u1 + 2 * u2 + 2 * u3 + u4) / 6.0
+    v_avg = (v1 + 2 * v2 + 2 * v3 + v4) / 6.0
     return latlon_offset(lat, lon, u_avg, v_avg, dt_s)
 
 
@@ -102,7 +120,8 @@ def run_hindcast(
                        "timestamp": t0.isoformat(), "mode": "reconstructed"}]
 
         for step in range(1, n_steps + 1):
-            lat, lon = rk4_step(lat, lon, current_data, wind_data, alpha, dt_s, direction=-1)
+            step_time = t0 - timedelta(minutes=(step - 1) * dt_m)
+            lat, lon = rk4_step(lat, lon, current_data, wind_data, alpha, dt_s, direction=-1, current_time=step_time)
             lat += float(rng.normal(0, 0.002))
             lon += float(rng.normal(0, 0.002))
             ts = t0 - timedelta(minutes=step * dt_m)
@@ -212,7 +231,8 @@ def run_forecast(
                        "timestamp": t0.isoformat(), "mode": "observed"}]
 
         for step in range(1, n_steps + 1):
-            lat, lon = rk4_step(lat, lon, current_data, wind_data, alpha, dt_s, direction=1)
+            step_time = t0 + timedelta(minutes=(step - 1) * dt_m)
+            lat, lon = rk4_step(lat, lon, current_data, wind_data, alpha, dt_s, direction=1, current_time=step_time)
             lat += float(rng.normal(0, 0.003))
             lon += float(rng.normal(0, 0.003))
             ts = t0 + timedelta(minutes=step * dt_m)

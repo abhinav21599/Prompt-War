@@ -217,6 +217,34 @@ class CopernicusMarineService:
                         "current_direction_deg": round(dir_deg, 1),
                     })
 
+            # Extract all time slices if multi-temporal dataset
+            time_slices: List[Dict[str, Any]] = []
+            if uo_raw.ndim >= 3 and len(timestamps) > 1:
+                for t_idx, ts in enumerate(timestamps):
+                    if uo_raw.ndim == 4:
+                        u_t = uo_raw[t_idx, 0, :, :]
+                        v_t = vo_raw[t_idx, 0, :, :]
+                    else:
+                        u_t = uo_raw[t_idx, :, :]
+                        v_t = vo_raw[t_idx, :, :]
+                    pts_t = []
+                    for i, la in enumerate(lats):
+                        for j, lo in enumerate(lons):
+                            u_val = float(u_t[i, j])
+                            v_val = float(v_t[i, j])
+                            if np.isnan(u_val) or np.isnan(v_val):
+                                continue
+                            pts_t.append({
+                                "lat": la,
+                                "lon": lo,
+                                "current_u": round(u_val, 4),
+                                "current_v": round(v_val, 4),
+                            })
+                    time_slices.append({
+                        "timestamp": ts,
+                        "points": pts_t,
+                    })
+
             result = {
                 "field": "current",
                 "source": self.SOURCE_LABEL,
@@ -227,6 +255,7 @@ class CopernicusMarineService:
                 "units": "m/s",
                 "timestamp": primary_timestamp,
                 "timestamps": timestamps,
+                "time_slices": time_slices,
                 "depth_m": 0.494025,
                 "bounds": {
                     "north": north,
@@ -326,42 +355,12 @@ class CopernicusMarineService:
                 f"[{bounds['south']}–{bounds['north']} N, {bounds['west']}–{bounds['east']} E]."
             )
 
-        # Spatio-temporal interpolation via points
-        points = field_data.get("points", [])
-        if not points:
-            raise ValueError("Copernicus Marine current field contains no valid points.")
-
-        # Local search window (0.6 degree)
-        candidates = [p for p in points if abs(p["lat"] - lat) <= 0.6 and abs(p["lon"] - lon) <= 0.6]
-        if not candidates:
-            candidates = points
-
-        # Inverse-distance weighting
-        total_w = 0.0
-        sum_u = 0.0
-        sum_v = 0.0
-        min_d = float("inf")
-        nearest_u, nearest_v = 0.0, 0.0
-
-        for pt in candidates:
-            d = math.sqrt((pt["lat"] - lat)**2 + (pt["lon"] - lon)**2)
-            if d < 1e-6:
-                return {"u": pt["current_u"], "v": pt["current_v"]}
-            if d < min_d:
-                min_d = d
-                nearest_u = pt["current_u"]
-                nearest_v = pt["current_v"]
-            w = 1.0 / (d**2)
-            sum_u += w * pt["current_u"]
-            sum_v += w * pt["current_v"]
-            total_w += w
-
-        if total_w == 0.0:
-            return {"u": round(nearest_u, 4), "v": round(nearest_v, 4)}
+        from app.environmental.fields import interpolate_field
+        u_val, v_val = interpolate_field(lat, lon, field_data, target_time=dt)
 
         return {
-            "u": round(sum_u / total_w, 4),
-            "v": round(sum_v / total_w, 4)
+            "u": round(u_val, 4),
+            "v": round(v_val, 4)
         }
 
 
