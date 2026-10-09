@@ -41,12 +41,17 @@ def generate_synthetic_sar_scene(
     height: int = 256,
     seed: int = 26143,
     output_dir: Optional[str] = None,
+    bounds: Optional[Dict[str, float]] = None,
+    scene_id: Optional[str] = None,
+    satellite: Optional[str] = None,
+    acquisition_time: Optional[str] = None,
+    region_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generates a realistic, deterministic synthetic Sentinel-1 SAR scene
     with ocean Bragg backscatter, multi-look speckle clutter, an irregular
     low-backscatter mineral oil slick, and a secondary look-alike region.
-    All outputs strictly adhere to seed 26143.
+    All outputs strictly adhere to the provided seed.
     """
     rng = np.random.default_rng(seed)
 
@@ -60,8 +65,7 @@ def generate_synthetic_sar_scene(
     sea_intensity = base_sea_linear * speckle
 
     # 2. Irregular Oil Slick Geometry (Mineral Oil Slick)
-    # Physically coupled to 18-hour forward advection from true origin (15.21N, 72.41E)
-    # Drift vector (current + 0.03*wind) advects slick toward (15.42N, 72.68E) ~ pixel (135, 125)
+    # Physically coupled to forward advection
     y, x = np.ogrid[:height, :width]
     cx, cy = 135.0, 125.0
 
@@ -115,13 +119,13 @@ def generate_synthetic_sar_scene(
     # 6. Normalize to [-1, 1] range for ML tensor ingestion
     normalized = np.clip((sigma0_db + 17.5) / 17.5, -1.0, 1.0).astype(np.float32)
 
-    # 7. Geospatial Metadata (Arabian Sea Off Goa offshore fairway)
-    min_lon, max_lon = 72.35, 73.05
-    min_lat, max_lat = 15.15, 15.65
+    # 7. Geospatial Metadata
+    effective_bounds = bounds or {"min_lon": 72.35, "min_lat": 15.15, "max_lon": 73.05, "max_lat": 15.65}
+    min_lon, max_lon = effective_bounds["min_lon"], effective_bounds["max_lon"]
+    min_lat, max_lat = effective_bounds["min_lat"], effective_bounds["max_lat"]
     res_x = (max_lon - min_lon) / width
     res_y = -(max_lat - min_lat) / height
     transform = [res_x, 0.0, min_lon, 0.0, res_y, max_lat]
-    bounds = {"min_lon": min_lon, "min_lat": min_lat, "max_lon": max_lon, "max_lat": max_lat}
 
     result = {
         "calibrated_db": sigma0_db,
@@ -129,13 +133,13 @@ def generate_synthetic_sar_scene(
         "ground_truth_mask": oil_mask,
         "lookalike_mask": lookalike_mask,
         "metadata": {
-            "scene_id": "OILTRACE-DEMO-001",
-            "satellite": "Sentinel-1A",
+            "scene_id": scene_id or "OILTRACE-DEMO-001",
+            "satellite": satellite or "Sentinel-1A",
             "instrument": "C-SAR (5.405 GHz)",
             "polarization": "VV",
-            "acquisition_time": "2024-03-15T06:00:00+00:00",
-            "region_name": "Arabian Sea (Goa Offshore)",
-            "bounds": bounds,
+            "acquisition_time": acquisition_time or "2024-03-15T06:00:00+00:00",
+            "region_name": region_name or "Arabian Sea (Goa Offshore)",
+            "bounds": effective_bounds,
             "crs": "EPSG:4326",
             "transform": transform,
             "width": width,

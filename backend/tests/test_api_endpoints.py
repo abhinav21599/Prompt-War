@@ -103,6 +103,37 @@ class TestApiEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["detail"], "Satellite image unavailable.")
 
+    def test_09_multiple_incidents_and_idempotence(self):
+        # Repeated seeding must be idempotent
+        seed_demo_data()
+        seed_demo_data()
+
+        resp = self.client.get("/api/spills")
+        self.assertEqual(resp.status_code, 200)
+        spills = resp.json()
+        spill_ids = [s["id"] for s in spills]
+
+        # Verify 3 distinct demo incidents
+        self.assertIn("OILTRACE-DEMO-001", spill_ids)
+        self.assertIn("OILTRACE-DEMO-002", spill_ids)
+        self.assertIn("OILTRACE-DEMO-003", spill_ids)
+
+        # Verify no duplicate IDs
+        self.assertEqual(len(spill_ids), len(set(spill_ids)))
+
+        # Verify each incident has simulation and synthetic labelling
+        for s in spills:
+            if s["id"].startswith("OILTRACE-DEMO-"):
+                self.assertEqual(s["data_mode"], "simulation")
+                self.assertEqual(s["provenance"], "synthetic")
+                self.assertIsNotNone(s.get("centroid_geojson"))
+
+        # Verify individual incidents are queryable
+        for inc_id in ["OILTRACE-DEMO-001", "OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]:
+            r = self.client.get(f"/api/spills/{inc_id}")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["id"], inc_id)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -77,8 +77,10 @@ def _seed_incident(incident_id: str):
     finally:
         conn.close()
 
+ALL_DEMO_INCIDENTS = ["OILTRACE-DEMO-001", "OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]
+
 def seed_demo_data():
-    """Seed the demo incident if not already present."""
+    """Seed all deterministic demo incidents idempotently if not already present."""
     scenes_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/satellite_scenes"))
     if not os.path.exists(os.path.join(scenes_dir, "S1A_IW_GRDH_1SDV_20240315T060000_composite.png")):
         from app.simulation.satellite_imagery_generator import generate_mock_satellite_scenes
@@ -86,7 +88,7 @@ def seed_demo_data():
 
     conn = get_connection()
     try:
-        for inc_id in ["OILTRACE-DEMO-001"]:
+        for inc_id in ALL_DEMO_INCIDENTS:
             row = conn.execute("SELECT id FROM oil_spills WHERE id=?", (inc_id,)).fetchone()
             if not row:
                 _seed_incident(inc_id)

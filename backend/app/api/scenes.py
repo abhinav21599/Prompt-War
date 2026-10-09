@@ -98,10 +98,19 @@ def list_scenes():
     scenes = [dict(s) for s in AVAILABLE_MOCK_SCENES]
     conn = get_connection()
     try:
-        row = conn.execute("SELECT area_km2 FROM oil_spills WHERE id = 'OILTRACE-DEMO-001'").fetchone()
-        area_val = row_get(row, "area_km2", row_get(row, 0, None))
-        if area_val is not None:
-            scenes[0]["estimated_spill_area_km2"] = round(area_val, 2)
+        mapping = {
+            "S1A_IW_GRDH_1SDV_20240315T060000_demo": "OILTRACE-DEMO-001",
+            "S1A_IW_GRDH_1SDV_20240318T054500_kutch": "OILTRACE-DEMO-002",
+            "S1C_IW_GRDH_1SDV_20240322T061500_lakshadweep": "OILTRACE-DEMO-003",
+        }
+        for sc in scenes:
+            sp_id = mapping.get(sc["id"])
+            if sp_id:
+                row = conn.execute("SELECT area_km2 FROM oil_spills WHERE id = ?", (sp_id,)).fetchone()
+                if row:
+                    area_val = row_get(row, "area_km2", row_get(row, 0, None))
+                    if area_val is not None:
+                        sc["estimated_spill_area_km2"] = round(area_val, 2)
     except Exception:
         pass
     finally:
@@ -190,9 +199,9 @@ def get_scene_image(scene_id: str = "S1A_IW_GRDH_1SDV_20240315T060000_demo", mod
     # Match scene_id prefix
     if "clean" in scene_id:
         prefix = "S1B_IW_GRDH_1SDV_20240310T053000"
-    elif "kutch" in scene_id:
+    elif "kutch" in scene_id or "002" in scene_id:
         prefix = "S1A_IW_GRDH_1SDV_20240318T054500"
-    elif "lakshadweep" in scene_id:
+    elif "lakshadweep" in scene_id or "003" in scene_id:
         prefix = "S1C_IW_GRDH_1SDV_20240322T061500"
     else:
         prefix = "S1A_IW_GRDH_1SDV_20240315T060000"

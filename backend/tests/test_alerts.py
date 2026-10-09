@@ -22,10 +22,11 @@ def test_alerts_lifecycle():
     assert isinstance(alerts, list)
 
     conn = get_connection()
+    spill_id = "TEST-ALERT-SPILL-01"
+    alert_id = None
     try:
         now = datetime.now(timezone.utc).isoformat()
         # Create a parent oil_spill record for foreign key integrity
-        spill_id = "TEST-ALERT-SPILL-01"
         conn.execute(
             """INSERT OR IGNORE INTO oil_spills
             (id, status, detected_class, data_mode, provenance, created_at, updated_at)
@@ -49,25 +50,33 @@ def test_alerts_lifecycle():
             provenance="OBSERVED_REAL_API",
         )
         alert_id = created["id"]
+
+        # 3. Retrieve alert details
+        detail_res = client.get(f"/api/alerts/{alert_id}")
+        assert detail_res.status_code == 200
+        detail = detail_res.json()
+        assert detail["id"] == alert_id
+        assert detail["severity"] == "critical"
+        assert detail["status"] == "active"
+        assert detail["confidence"] == 0.92
+        assert "spill" in detail
+
+        # 4. Acknowledge alert
+        ack_res = client.post(f"/api/alerts/{alert_id}/ack", json={"acknowledged_by": "test_operator"})
+        assert ack_res.status_code == 200
+        assert ack_res.json()["status"] == "success"
+
+        # Verify status changed to acknowledged
+        updated_res = client.get(f"/api/alerts/{alert_id}")
+        assert updated_res.status_code == 200
+        assert updated_res.json()["status"] == "acknowledged"
     finally:
-        conn.close()
-
-    # 3. Retrieve alert details
-    detail_res = client.get(f"/api/alerts/{alert_id}")
-    assert detail_res.status_code == 200
-    detail = detail_res.json()
-    assert detail["id"] == alert_id
-    assert detail["severity"] == "critical"
-    assert detail["status"] == "active"
-    assert detail["confidence"] == 0.92
-    assert "spill" in detail
-
-    # 4. Acknowledge alert
-    ack_res = client.post(f"/api/alerts/{alert_id}/ack", json={"acknowledged_by": "test_operator"})
-    assert ack_res.status_code == 200
-    assert ack_res.json()["status"] == "success"
-
-    # Verify status changed to acknowledged
-    updated_res = client.get(f"/api/alerts/{alert_id}")
-    assert updated_res.status_code == 200
-    assert updated_res.json()["status"] == "acknowledged"
+        try:
+            if alert_id:
+                conn.execute("DELETE FROM alerts WHERE id = ? OR spill_id = ?", (alert_id, spill_id))
+            conn.execute("DELETE FROM oil_spills WHERE id = ?", (spill_id,))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()

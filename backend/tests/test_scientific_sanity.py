@@ -389,16 +389,22 @@ class TestScientificSanity(unittest.TestCase):
                 "2024-03-15T06:00:00Z", "real", "operational", "2024-03-15T06:00:00Z", "2024-03-15T06:00:00Z"
             ))
             conn.commit()
-        finally:
-            conn.close()
 
-        # No rows exist in environmental_fields for test_id.
-        # In real mode, it must reach provider temporal coverage validation and return 422 with coverage details (NOT 422 'Current data unavailable for this time/location').
-        resp = client.post(f"/api/spills/{test_id}/hindcast?mode=real")
-        self.assertEqual(resp.status_code, 422)
-        err_msg = resp.json().get("detail", "")
-        self.assertNotIn("Current data unavailable", err_msg)
-        self.assertTrue("insufficient" in err_msg or "coverage" in err_msg or "snapshot" in err_msg)
+            # No rows exist in environmental_fields for test_id.
+            # In real mode, it must reach provider temporal coverage validation and return 422 with coverage details (NOT 422 'Current data unavailable for this time/location').
+            resp = client.post(f"/api/spills/{test_id}/hindcast?mode=real")
+            self.assertEqual(resp.status_code, 422)
+            err_msg = resp.json().get("detail", "")
+            self.assertNotIn("Current data unavailable", err_msg)
+            self.assertTrue("insufficient" in err_msg or "coverage" in err_msg or "snapshot" in err_msg)
+        finally:
+            try:
+                conn.execute("DELETE FROM oil_spills WHERE id = ?", (test_id,))
+                conn.commit()
+            except Exception:
+                pass
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

@@ -1,8 +1,6 @@
 # ── User Specified Ignores ──
 documents/
 docs/
-gen*.py
-gen/
 
 # ── Environment & Secrets ──
 .env
