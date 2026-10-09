@@ -105,12 +105,17 @@ def validate_temporal_coverage(
     Validate that field_data has temporal coverage encompassing [min(start, end), max(start, end)].
     Raises ValueError if operational dataset lacks adequate temporal coverage.
     """
+    if not field_data:
+        raise ValueError(f"Operational {field_name} data is missing.")
+
     req_start = parse_iso_datetime(min(start_time, end_time))
     req_end = parse_iso_datetime(max(start_time, end_time))
 
     time_slices = field_data.get("time_slices")
     if time_slices and len(time_slices) > 0:
-        parsed_times = [parse_iso_datetime(s["timestamp"]) for s in time_slices]
+        parsed_times = [parse_iso_datetime(s["timestamp"]) for s in time_slices if "timestamp" in s]
+        if not parsed_times:
+            raise ValueError(f"Operational {field_name} dataset is missing valid temporal metadata.")
         cov_start = min(parsed_times)
         cov_end = max(parsed_times)
         if req_start < cov_start or req_end > cov_end:
@@ -123,13 +128,13 @@ def validate_temporal_coverage(
 
     if "timestamp" in field_data:
         cov_time = parse_iso_datetime(field_data["timestamp"])
-        if req_end != req_start:
+        if req_end != req_start or req_start != cov_time:
             raise ValueError(
                 f"Operational {field_name} snapshot at {cov_time.isoformat()} does not provide temporal coverage for the requested interval [{req_start.isoformat()}, {req_end.isoformat()}]."
             )
         return True
 
-    return True
+    raise ValueError(f"Operational {field_name} dataset is missing temporal metadata.")
 
 
 def interpolate_field(
@@ -154,6 +159,8 @@ def interpolate_field(
         u_key, v_key = "current_u", "current_v"
         default_err = "Current data unavailable for this time/location."
 
+    is_real = field_data.get("data_mode") == "real" or field_data.get("strict_temporal", False)
+
     time_slices = field_data.get("time_slices")
     if time_slices and len(time_slices) > 0 and target_time is not None:
         t_target = parse_iso_datetime(target_time)
@@ -171,7 +178,7 @@ def interpolate_field(
         cov_max = parsed_slices[-1][0]
 
         if t_target < cov_min or t_target > cov_max:
-            if field_data.get("strict_temporal", False):
+            if is_real:
                 raise ValueError(
                     f"Requested timestamp {t_target.isoformat()} is outside available operational "
                     f"temporal coverage [{cov_min.isoformat()}, {cov_max.isoformat()}]. Extrapolation is disallowed."
@@ -201,6 +208,17 @@ def interpolate_field(
         return interpolate_field_spatial(
             lat, lon, parsed_slices[-1][1]["points"], u_key, v_key, container_dict=parsed_slices[-1][1]
         )
+
+    if target_time is not None and is_real:
+        if "timestamp" in field_data:
+            t_target = parse_iso_datetime(target_time)
+            cov_time = parse_iso_datetime(field_data["timestamp"])
+            if t_target != cov_time:
+                raise ValueError(
+                    f"Requested timestamp {t_target.isoformat()} does not match operational {field_type} snapshot at {cov_time.isoformat()}."
+                )
+        elif not time_slices:
+            raise ValueError(f"Operational {field_type} dataset is missing temporal metadata.")
 
     # Standard spatial-only interpolation (single time slice or no target_time specified)
     points = field_data.get("points", [])

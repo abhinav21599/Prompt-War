@@ -94,6 +94,13 @@ def run_hindcast(
     h_hours = hindcast_hours if hindcast_hours is not None else settings.default_hindcast_hours
     run_seed = seed if seed is not None else settings.oiltrace_demo_seed
 
+    if data_mode == "real" or current_data.get("data_mode") == "real" or wind_data.get("data_mode") == "real":
+        from app.environmental.fields import validate_temporal_coverage
+        t_start = t0 - timedelta(hours=h_hours)
+        t_end = t0
+        validate_temporal_coverage(current_data, t_start, t_end, "currents")
+        validate_temporal_coverage(wind_data, t_start, t_end, "wind")
+
     rng = np.random.default_rng(run_seed)
     dt_s = dt_m * 60
     n_steps = int(h_hours * 60 / dt_m)
@@ -204,6 +211,13 @@ def run_forecast(
     dt_m = timestep_min if timestep_min is not None else settings.default_integration_timestep_minutes
     f_hours = forecast_hours if forecast_hours is not None else settings.default_forecast_hours
     run_seed = seed if seed is not None else settings.oiltrace_demo_seed
+
+    if data_mode == "real" or current_data.get("data_mode") == "real" or wind_data.get("data_mode") == "real":
+        from app.environmental.fields import validate_temporal_coverage
+        t_start = t0
+        t_end = t0 + timedelta(hours=f_hours)
+        validate_temporal_coverage(current_data, t_start, t_end, "currents")
+        validate_temporal_coverage(wind_data, t_start, t_end, "wind")
 
     rng = np.random.default_rng(run_seed + 1)
     dt_s = dt_m * 60

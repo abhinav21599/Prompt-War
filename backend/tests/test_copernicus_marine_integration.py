@@ -4,6 +4,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from app.main import app, seed_demo_data
 from app.database.engine import init_db
@@ -97,31 +98,18 @@ class TestCopernicusMarineIntegration(unittest.TestCase):
         self.assertEqual(data["status"], "DETERMINISTIC SIMULATION (SEED 26143)")
 
     def test_07_rk4_hindcast_with_real_currents(self):
-        """Verify RK4 reverse drift hindcast integrates with real Copernicus Marine currents."""
+        """Verify API in real mode rejects requests with insufficient/mismatched operational temporal coverage (HTTP 422)."""
         response = self.client.post("/api/spills/OILTRACE-DEMO-001/hindcast?mode=real")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn("Copernicus Marine", data["environmental_source"])
-        self.assertIn("Copernicus Climate Data Store (ERA5)", data["environmental_source"])
-        self.assertEqual(data["data_mode"], "real")
-        self.assertEqual(data["provenance"], "reconstructed")
-        self.assertIn("origin_lat", data)
-        self.assertIn("origin_lon", data)
-        # Origin must lie within Arabian Sea domain
-        self.assertTrue(10.0 <= data["origin_lat"] <= 20.0)
-        self.assertTrue(68.0 <= data["origin_lon"] <= 76.0)
+        self.assertEqual(response.status_code, 422)
+        err = response.json().get("detail", "")
+        self.assertTrue("insufficient" in err or "coverage" in err or "snapshot" in err)
 
     def test_08_rk4_forecast_with_real_currents(self):
-        """Verify RK4 forward forecast integrates with real Copernicus Marine currents."""
+        """Verify API in real mode rejects requests with insufficient/mismatched operational temporal coverage (HTTP 422)."""
         response = self.client.post("/api/spills/OILTRACE-DEMO-001/forecast?mode=real")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn("Copernicus Marine", data["environmental_source"])
-        self.assertEqual(data["data_mode"], "real")
-        self.assertEqual(data["provenance"], "predicted")
-        self.assertIn("horizon_stats", data)
-        self.assertIn("+6h", data["horizon_stats"])
-        self.assertIn("+48h", data["horizon_stats"])
+        self.assertEqual(response.status_code, 422)
+        err = response.json().get("detail", "")
+        self.assertTrue("insufficient" in err or "coverage" in err or "snapshot" in err)
 
     def test_09_simulation_mode_safety_and_determinism(self):
         """Verify Simulation Mode preserves exact deterministic Seed 26143 results."""

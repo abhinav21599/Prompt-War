@@ -268,5 +268,138 @@ class TestScientificSanity(unittest.TestCase):
         self.assertEqual(f1["horizon_stats"], f2["horizon_stats"])
 
 
+    def test_single_snapshot_temporal_rule(self):
+        """Single-snapshot dataset supports only zero-duration point requests at that exact timestamp."""
+        from app.environmental.fields import validate_temporal_coverage
+        from datetime import datetime, timezone
+
+        snapshot_field = {
+            "field": "wind",
+            "timestamp": "2026-08-01T12:00:00Z",
+            "points": [{"lat": 15.0, "lon": 72.0, "wind_u": 5.0, "wind_v": 2.0}],
+        }
+        exact_time = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+        self.assertTrue(validate_temporal_coverage(snapshot_field, exact_time, exact_time, "wind"))
+
+        # Non-zero interval must raise ValueError
+        diff_end = datetime(2026, 8, 1, 18, 0, 0, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError) as ctx:
+            validate_temporal_coverage(snapshot_field, exact_time, diff_end, "wind")
+        self.assertIn("does not provide temporal coverage", str(ctx.exception))
+
+        # Different point timestamp must raise ValueError
+        other_time = datetime(2026, 8, 1, 14, 0, 0, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError) as ctx:
+            validate_temporal_coverage(snapshot_field, other_time, other_time, "wind")
+        self.assertIn("does not provide temporal coverage", str(ctx.exception))
+
+    def test_real_mode_drift_rejection_on_insufficient_wind_coverage(self):
+        """run_hindcast and run_forecast in real mode must reject insufficient temporal coverage."""
+        from app.drift.particle_engine import run_hindcast, run_forecast
+        from datetime import datetime, timezone
+
+        cur_multi = {
+            "field": "current",
+            "data_mode": "real",
+            "time_slices": [
+                {"timestamp": "2026-09-13T00:00:00Z", "points": [{"lat": 15.0, "lon": 72.0, "current_u": 0.2, "current_v": 0.1}]},
+                {"timestamp": "2026-09-13T12:00:00Z", "points": [{"lat": 15.0, "lon": 72.0, "current_u": 0.2, "current_v": 0.1}]},
+            ],
+            "points": [{"lat": 15.0, "lon": 72.0, "current_u": 0.2, "current_v": 0.1}],
+        }
+        wind_snapshot = {
+            "field": "wind",
+            "data_mode": "real",
+            "timestamp": "2026-08-01T12:00:00Z",
+            "points": [{"lat": 15.0, "lon": 72.0, "wind_u": 5.0, "wind_v": 2.0}],
+        }
+        t0 = datetime(2026, 9, 13, 6, 0, 0, tzinfo=timezone.utc)
+
+        # 6-hour hindcast requires wind coverage in [00:00, 06:00]; wind_snapshot is 2026-08-01
+        with self.assertRaises(ValueError) as ctx:
+            run_hindcast(15.0, 72.0, [], t0, cur_multi, wind_snapshot, hindcast_hours=6.0, data_mode="real")
+        self.assertIn("does not provide temporal coverage", str(ctx.exception))
+
+        # 6-hour forecast requires wind coverage in [06:00, 12:00]; wind_snapshot is 2026-08-01
+        with self.assertRaises(ValueError) as ctx:
+            run_forecast(15.0, 72.0, [], t0, cur_multi, wind_snapshot, forecast_hours=6.0, data_mode="real")
+        self.assertIn("does not provide temporal coverage", str(ctx.exception))
+
+        # Current coverage rejection when current field interval is insufficient
+        cur_short = {
+            "field": "current",
+            "data_mode": "real",
+            "time_slices": [
+                {"timestamp": "2026-09-13T03:00:00Z", "points": [{"lat": 15.0, "lon": 72.0, "current_u": 0.2, "current_v": 0.1}]},
+                {"timestamp": "2026-09-13T06:00:00Z", "points": [{"lat": 15.0, "lon": 72.0, "current_u": 0.2, "current_v": 0.1}]},
+            ],
+            "points": [{"lat": 15.0, "lon": 72.0, "current_u": 0.2, "current_v": 0.1}],
+        }
+        wind_multi = {
+            "field": "wind",
+            "data_mode": "real",
+            "time_slices": [
+                {"timestamp": "2026-09-13T00:00:00Z", "points": [{"lat": 15.0, "lon": 72.0, "wind_u": 5.0, "wind_v": 2.0}]},
+                {"timestamp": "2026-09-13T06:00:00Z", "points": [{"lat": 15.0, "lon": 72.0, "wind_u": 5.0, "wind_v": 2.0}]},
+            ],
+            "points": [{"lat": 15.0, "lon": 72.0, "wind_u": 5.0, "wind_v": 2.0}],
+        }
+        with self.assertRaises(ValueError) as ctx:
+            run_hindcast(15.0, 72.0, [], t0, cur_short, wind_multi, hindcast_hours=6.0, data_mode="real")
+        self.assertIn("Operational currents data coverage", str(ctx.exception))
+
+    def test_api_real_mode_hindcast_insufficient_coverage_http_422(self):
+        """API must return HTTP 422 when real-mode forcing lacks adequate temporal coverage."""
+        from fastapi.testclient import TestClient
+        from app.main import app, seed_demo_data
+        from app.database.engine import init_db
+
+        init_db()
+        seed_demo_data()
+        client = TestClient(app)
+
+        # Demo incident OILTRACE-DEMO-001 has acquisition time in 2024-03-15
+        # Operational Copernicus Marine data has timestamps in 2026-09-13
+        # Requesting mode=real must return HTTP 422 with clear coverage explanation
+        resp = client.post("/api/spills/OILTRACE-DEMO-001/hindcast?mode=real")
+        self.assertEqual(resp.status_code, 422)
+        err_msg = resp.json().get("detail", "")
+        self.assertTrue("insufficient" in err_msg or "coverage" in err_msg or "snapshot" in err_msg)
+
+    def test_api_real_mode_hindcast_without_stored_env_rows(self):
+        """API real mode must load real environmental providers without requiring pre-stored DB environmental_fields rows."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.database.engine import init_db, get_connection
+        import uuid
+
+        init_db()
+        client = TestClient(app)
+        test_id = f"TEST-REAL-SPILL-{uuid.uuid4().hex[:6]}"
+        conn = get_connection()
+        try:
+            conn.execute("""INSERT INTO oil_spills (
+                id, incident_name, status, detected_class, detection_confidence,
+                centroid_geojson, spill_polygon_geojson, satellite_acquisition_time,
+                data_mode, provenance, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                test_id, "Test Incident", "confirmed", "oil_spill", 0.95,
+                '{"type": "Point", "coordinates": [72.68, 15.42]}',
+                '{"type": "Polygon", "coordinates": [[[72.67, 15.41], [72.69, 15.41], [72.69, 15.43], [72.67, 15.43], [72.67, 15.41]]]}',
+                "2024-03-15T06:00:00Z", "real", "operational", "2024-03-15T06:00:00Z", "2024-03-15T06:00:00Z"
+            ))
+            conn.commit()
+        finally:
+            conn.close()
+
+        # No rows exist in environmental_fields for test_id.
+        # In real mode, it must reach provider temporal coverage validation and return 422 with coverage details (NOT 422 'Current data unavailable for this time/location').
+        resp = client.post(f"/api/spills/{test_id}/hindcast?mode=real")
+        self.assertEqual(resp.status_code, 422)
+        err_msg = resp.json().get("detail", "")
+        self.assertNotIn("Current data unavailable", err_msg)
+        self.assertTrue("insufficient" in err_msg or "coverage" in err_msg or "snapshot" in err_msg)
+
+
 if __name__ == "__main__":
     unittest.main()

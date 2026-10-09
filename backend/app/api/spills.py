@@ -190,19 +190,6 @@ def run_hindcast_endpoint(spill_id: str, mode: Optional[str] = Query(None)):
         centroid = parse_json(sp["centroid_geojson"])
         c_lat = centroid["coordinates"][1] if centroid else 15.42
         c_lon = centroid["coordinates"][0] if centroid else 72.68
-        env_row = conn.execute(
-            "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
-            (spill_id, "current")
-        ).fetchone()
-        wind_row = conn.execute(
-            "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
-            (spill_id, "wind")
-        ).fetchone()
-        if not env_row:
-            raise HTTPException(422, "Current data unavailable for this time/location.")
-        if not wind_row:
-            raise HTTPException(422, "Wind data unavailable for this time/location.")
-
         use_real = (mode == "real") if mode is not None else (sp.get("data_mode") == "real")
         if use_real:
             from app.integrations.copernicus_marine_service import copernicus_marine_service
@@ -226,6 +213,18 @@ def run_hindcast_endpoint(spill_id: str, mode: Optional[str] = Query(None)):
             env_source = "Copernicus Marine + Copernicus Climate Data Store (ERA5)"
             data_mode_val = "real"
         else:
+            env_row = conn.execute(
+                "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
+                (spill_id, "current")
+            ).fetchone()
+            wind_row = conn.execute(
+                "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
+                (spill_id, "wind")
+            ).fetchone()
+            if not env_row:
+                raise HTTPException(422, "Current data unavailable for this time/location.")
+            if not wind_row:
+                raise HTTPException(422, "Wind data unavailable for this time/location.")
             current_data = parse_json(env_row["field_data_json"])
             current_data["field"] = "current"
             wind_data = parse_json(wind_row["field_data_json"])
@@ -234,15 +233,21 @@ def run_hindcast_endpoint(spill_id: str, mode: Optional[str] = Query(None)):
             data_mode_val = "simulation"
 
         t0 = datetime.fromisoformat(sp["satellite_acquisition_time"].replace("Z", "+00:00"))
+        prov_val = "reconstructed" if data_mode_val == "real" else "synthetic"
 
-        result = run_hindcast(
-            c_lat, c_lon, coords, t0, current_data, wind_data,
-            windage_coefficient=settings.default_windage_coefficient,
-            particle_count=settings.default_particle_count,
-            timestep_min=settings.default_integration_timestep_minutes,
-            hindcast_hours=settings.default_hindcast_hours,
-            seed=settings.oiltrace_demo_seed
-        )
+        try:
+            result = run_hindcast(
+                c_lat, c_lon, coords, t0, current_data, wind_data,
+                windage_coefficient=settings.default_windage_coefficient,
+                particle_count=settings.default_particle_count,
+                timestep_min=settings.default_integration_timestep_minutes,
+                hindcast_hours=settings.default_hindcast_hours,
+                seed=settings.oiltrace_demo_seed,
+                data_mode=data_mode_val,
+                provenance=prov_val,
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e))
 
         now = datetime.now(timezone.utc).isoformat()
         run_id = f"HCAST-{spill_id}-{uuid.uuid4().hex[:8]}"
@@ -300,19 +305,6 @@ def run_forecast_endpoint(spill_id: str, mode: Optional[str] = Query(None)):
         centroid = parse_json(sp["centroid_geojson"])
         c_lat = centroid["coordinates"][1] if centroid else 15.42
         c_lon = centroid["coordinates"][0] if centroid else 72.68
-        env_row = conn.execute(
-            "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
-            (spill_id, "current")
-        ).fetchone()
-        wind_row = conn.execute(
-            "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
-            (spill_id, "wind")
-        ).fetchone()
-        if not env_row:
-            raise HTTPException(422, "Current data unavailable for this time/location.")
-        if not wind_row:
-            raise HTTPException(422, "Wind data unavailable for this time/location.")
-
         use_real = (mode == "real") if mode is not None else (sp.get("data_mode") == "real")
         if use_real:
             from app.integrations.copernicus_marine_service import copernicus_marine_service
@@ -336,6 +328,18 @@ def run_forecast_endpoint(spill_id: str, mode: Optional[str] = Query(None)):
             env_source = "Copernicus Marine + Copernicus Climate Data Store (ERA5)"
             data_mode_val = "real"
         else:
+            env_row = conn.execute(
+                "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
+                (spill_id, "current")
+            ).fetchone()
+            wind_row = conn.execute(
+                "SELECT field_data_json FROM environmental_fields WHERE spill_id=? AND field_type=?",
+                (spill_id, "wind")
+            ).fetchone()
+            if not env_row:
+                raise HTTPException(422, "Current data unavailable for this time/location.")
+            if not wind_row:
+                raise HTTPException(422, "Wind data unavailable for this time/location.")
             current_data = parse_json(env_row["field_data_json"])
             current_data["field"] = "current"
             wind_data = parse_json(wind_row["field_data_json"])
@@ -344,15 +348,21 @@ def run_forecast_endpoint(spill_id: str, mode: Optional[str] = Query(None)):
             data_mode_val = "simulation"
 
         t0 = datetime.fromisoformat(sp["satellite_acquisition_time"].replace("Z", "+00:00"))
+        prov_val = "predicted" if data_mode_val == "real" else "synthetic"
 
-        result = run_forecast(
-            c_lat, c_lon, coords, t0, current_data, wind_data,
-            windage_coefficient=settings.default_windage_coefficient,
-            particle_count=settings.default_particle_count,
-            timestep_min=settings.default_integration_timestep_minutes,
-            forecast_hours=settings.default_forecast_hours,
-            seed=settings.oiltrace_demo_seed
-        )
+        try:
+            result = run_forecast(
+                c_lat, c_lon, coords, t0, current_data, wind_data,
+                windage_coefficient=settings.default_windage_coefficient,
+                particle_count=settings.default_particle_count,
+                timestep_min=settings.default_integration_timestep_minutes,
+                forecast_hours=settings.default_forecast_hours,
+                seed=settings.oiltrace_demo_seed,
+                data_mode=data_mode_val,
+                provenance=prov_val,
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e))
 
         now = datetime.now(timezone.utc).isoformat()
         run_id = f"FCAST-{spill_id}-{uuid.uuid4().hex[:8]}"
