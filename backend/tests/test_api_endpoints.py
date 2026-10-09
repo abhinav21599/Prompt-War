@@ -167,6 +167,38 @@ class TestApiEndpoints(unittest.TestCase):
             bbox = sp["bounding_box_geojson"]
             self.assertEqual(bbox["type"], "Polygon")
 
+    def test_11_startup_memory_safety_and_lazy_analysis(self):
+        # 1. Verify all 3 incidents are seeded in DB
+        resp = self.client.get("/api/spills")
+        self.assertEqual(resp.status_code, 200)
+        spills = {s["id"]: s for s in resp.json()}
+        for inc_id in ["OILTRACE-DEMO-001", "OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]:
+            self.assertIn(inc_id, spills)
+            # Check environment fields exist for each
+            env_resp = self.client.get(f"/api/spills/{inc_id}/environment")
+            self.assertEqual(env_resp.status_code, 200)
+            self.assertGreaterEqual(len(env_resp.json()), 2)
+            # Check tracks exist for each
+            tracks_resp = self.client.get(f"/api/spills/{inc_id}/tracks")
+            self.assertEqual(tracks_resp.status_code, 200)
+            self.assertGreaterEqual(len(tracks_resp.json()), 1)
+
+        # 2. Test lazy on-demand execution for DEMO-002 and DEMO-003
+        for deferred_id in ["OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]:
+            # Vessels / attribution endpoint lazily triggers analysis if not yet run
+            attr_resp = self.client.get(f"/api/attribution/{deferred_id}")
+            self.assertEqual(attr_resp.status_code, 200)
+            attr_data = attr_resp.json()
+            self.assertGreaterEqual(attr_data["count"], 1)
+
+            # Analysis summary endpoint returns populated results
+            analysis_resp = self.client.get(f"/api/spills/{deferred_id}/analysis")
+            self.assertEqual(analysis_resp.status_code, 200)
+            an_data = analysis_resp.json()
+            self.assertIn("hindcast", an_data)
+            self.assertIn("vessels", an_data)
+            self.assertGreaterEqual(len(an_data["vessels"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ from app.api import health, dashboard, vessels, attribution, reports, analysis, 
 from app.api import spills as spills_router
 from app.api import ais as ais_router
 
-def _seed_incident(incident_id: str):
+def _seed_incident(incident_id: str, precompute_analysis: bool = False):
     conn = get_connection()
     try:
         from app.simulation.generator import generate_demo_incident
@@ -68,12 +68,13 @@ def _seed_incident(incident_id: str):
                  ef.get("region_geojson"),ef["field_data_json"],ef["data_mode"],ef["provenance"],ef["created_at"]))
         conn.commit()
 
-        traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (incident_id,)).fetchone()
-        traj_count = extract_count(traj_row)
-        if traj_count == 0:
-            from app.api.spills import _execute_full_analysis
-            _execute_full_analysis(incident_id)
-            print(f"[SEED] Deterministic hindcast/forecast/attribution pre-generated for {incident_id}.")
+        if precompute_analysis:
+            traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (incident_id,)).fetchone()
+            traj_count = extract_count(traj_row)
+            if traj_count == 0:
+                from app.api.spills import _execute_full_analysis
+                _execute_full_analysis(incident_id)
+                print(f"[SEED] Deterministic hindcast/forecast/attribution pre-generated for {incident_id}.")
     finally:
         conn.close()
 
@@ -90,12 +91,13 @@ def seed_demo_data():
     try:
         from app.simulation.generator import generate_demo_incident
         for inc_id in ALL_DEMO_INCIDENTS:
+            precompute = (inc_id == "OILTRACE-DEMO-001")
             demo = generate_demo_incident(incident_id=inc_id)
             sp = demo["spill"]
             img = demo["satellite_image"]
             row = conn.execute("SELECT id FROM oil_spills WHERE id=?", (inc_id,)).fetchone()
             if not row:
-                _seed_incident(inc_id)
+                _seed_incident(inc_id, precompute_analysis=precompute)
             else:
                 conn.execute("""UPDATE oil_spills SET
                     satellite_image_id=?, incident_name=?, status=?, detected_class=?, detection_confidence=?,
@@ -136,11 +138,12 @@ def seed_demo_data():
                          ef.get("valid_time_end"),ef["source"],ef.get("source_version"),ef.get("resolution_deg"),
                          ef.get("region_geojson"),ef["field_data_json"],ef["data_mode"],ef["provenance"],ef["created_at"]))
                 conn.commit()
-                traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (inc_id,)).fetchone()
-                traj_count = extract_count(traj_row)
-                if traj_count == 0:
-                    from app.api.spills import _execute_full_analysis
-                    _execute_full_analysis(inc_id)
+                if precompute:
+                    traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (inc_id,)).fetchone()
+                    traj_count = extract_count(traj_row)
+                    if traj_count == 0:
+                        from app.api.spills import _execute_full_analysis
+                        _execute_full_analysis(inc_id)
         print("[SEED] Demo data seeded successfully.")
     except Exception as e:
         print(f"[SEED ERROR] {e}")

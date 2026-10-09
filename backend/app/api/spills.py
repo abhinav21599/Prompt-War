@@ -282,6 +282,14 @@ def get_hindcast(spill_id: str):
             (resolved_id, "hindcast")
         ).fetchone()
         if not row:
+            spill = conn.execute("SELECT data_mode FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
+            if spill:
+                _execute_full_analysis(resolved_id)
+                row = conn.execute(
+                    "SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type=? ORDER BY created_at DESC LIMIT 1",
+                    (resolved_id, "hindcast")
+                ).fetchone()
+        if not row:
             raise HTTPException(404, f"No hindcast found for incident {spill_id}.")
         d = row_to_dict(row)
         d["particles"] = parse_json(d["particles_json"])
@@ -400,6 +408,14 @@ def get_forecast(spill_id: str):
             (resolved_id, "forecast")
         ).fetchone()
         if not row:
+            spill = conn.execute("SELECT data_mode FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
+            if spill:
+                _execute_full_analysis(resolved_id)
+                row = conn.execute(
+                    "SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type=? ORDER BY created_at DESC LIMIT 1",
+                    (resolved_id, "forecast")
+                ).fetchone()
+        if not row:
             raise HTTPException(404, f"No forecast found for incident {spill_id}.")
         d = row_to_dict(row)
         d["particles"] = parse_json(d["particles_json"])
@@ -420,6 +436,18 @@ def get_spill_vessels(spill_id: str):
             WHERE a.spill_id=?
             ORDER BY a.rank
         """, (resolved_id,)).fetchall()
+
+        if not attrs:
+            spill = conn.execute("SELECT data_mode FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
+            if spill:
+                _execute_full_analysis(resolved_id)
+                attrs = conn.execute("""
+                    SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
+                    FROM attributions a
+                    JOIN vessels v ON a.mmsi=v.mmsi
+                    WHERE a.spill_id=?
+                    ORDER BY a.rank
+                """, (resolved_id,)).fetchall()
 
         if attrs:
             result = []

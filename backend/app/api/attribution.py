@@ -203,7 +203,7 @@ def analyze_attribution(payload: dict):
 def get_attribution(spill_id: str):
     conn = get_connection()
     try:
-        from app.api.spills import _resolve_spill_id
+        from app.api.spills import _resolve_spill_id, _execute_full_analysis
         resolved_id = _resolve_spill_id(spill_id, conn)
         rows = conn.execute("""
             SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
@@ -212,6 +212,17 @@ def get_attribution(spill_id: str):
             WHERE a.spill_id=?
             ORDER BY a.rank
         """, (resolved_id,)).fetchall()
+        if not rows:
+            spill_row = conn.execute("SELECT data_mode, provenance FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
+            if spill_row:
+                _execute_full_analysis(resolved_id)
+                rows = conn.execute("""
+                    SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
+                    FROM attributions a
+                    JOIN vessels v ON a.mmsi=v.mmsi
+                    WHERE a.spill_id=?
+                    ORDER BY a.rank
+                """, (resolved_id,)).fetchall()
         result = [row_to_dict(r) for r in rows]
         for r in result:
             r["behaviour_observations"] = parse_json(r.get("behaviour_observations_json")) or []
