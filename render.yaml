@@ -5,12 +5,20 @@ services:
     plan: free
     region: singapore
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python -c "from app.simulation.satellite_imagery_generator import generate_mock_satellite_scenes; generate_mock_satellite_scenes('data/satellite_scenes')"
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
       - key: DATA_MODE
         value: real
       - key: SIMULATION_SEED_ENABLED

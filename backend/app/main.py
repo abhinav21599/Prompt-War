@@ -1,4 +1,10 @@
 import os
+# Configure native library threading before C extensions load to minimize memory overhead
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -8,7 +14,29 @@ from app.api import health, dashboard, vessels, attribution, reports, analysis, 
 from app.api import spills as spills_router
 from app.api import ais as ais_router
 
-def _seed_incident(incident_id: str, precompute_analysis: bool = False):
+def _get_process_rss_mb() -> float:
+    """Read actual process RSS in MiB (Linux /proc/self/status with cross-platform fallback)."""
+    try:
+        if os.path.exists("/proc/self/status"):
+            with open("/proc/self/status", "r") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        parts = line.split()
+                        return round(int(parts[1]) / 1024.0, 2)
+    except Exception:
+        pass
+    try:
+        import resource
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 2)
+    except Exception:
+        pass
+    try:
+        import psutil
+        return round(psutil.Process().memory_info().rss / (1024.0 * 1024.0), 2)
+    except Exception:
+        return 0.0
+
+def _seed_incident(incident_id: str):
     conn = get_connection()
     try:
         from app.simulation.generator import generate_demo_incident
@@ -67,37 +95,23 @@ def _seed_incident(incident_id: str, precompute_analysis: bool = False):
                  ef.get("valid_time_end"),ef["source"],ef.get("source_version"),ef.get("resolution_deg"),
                  ef.get("region_geojson"),ef["field_data_json"],ef["data_mode"],ef["provenance"],ef["created_at"]))
         conn.commit()
-
-        if precompute_analysis:
-            traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (incident_id,)).fetchone()
-            traj_count = extract_count(traj_row)
-            if traj_count == 0:
-                from app.api.spills import _execute_full_analysis
-                _execute_full_analysis(incident_id)
-                print(f"[SEED] Deterministic hindcast/forecast/attribution pre-generated for {incident_id}.")
     finally:
         conn.close()
 
 ALL_DEMO_INCIDENTS = ["OILTRACE-DEMO-001", "OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]
 
 def seed_demo_data():
-    """Seed all deterministic demo incidents idempotently and synchronize geometry."""
-    scenes_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/satellite_scenes"))
-    if not os.path.exists(os.path.join(scenes_dir, "S1A_IW_GRDH_1SDV_20240315T060000_composite.png")):
-        from app.simulation.satellite_imagery_generator import generate_mock_satellite_scenes
-        generate_mock_satellite_scenes(scenes_dir)
-
+    """Seed all deterministic demo incidents idempotently without full analysis or startup image generation."""
     conn = get_connection()
     try:
         from app.simulation.generator import generate_demo_incident
         for inc_id in ALL_DEMO_INCIDENTS:
-            precompute = (inc_id == "OILTRACE-DEMO-001")
             demo = generate_demo_incident(incident_id=inc_id)
             sp = demo["spill"]
             img = demo["satellite_image"]
             row = conn.execute("SELECT id FROM oil_spills WHERE id=?", (inc_id,)).fetchone()
             if not row:
-                _seed_incident(inc_id, precompute_analysis=precompute)
+                _seed_incident(inc_id)
             else:
                 conn.execute("""UPDATE oil_spills SET
                     satellite_image_id=?, incident_name=?, status=?, detected_class=?, detection_confidence=?,
@@ -138,13 +152,7 @@ def seed_demo_data():
                          ef.get("valid_time_end"),ef["source"],ef.get("source_version"),ef.get("resolution_deg"),
                          ef.get("region_geojson"),ef["field_data_json"],ef["data_mode"],ef["provenance"],ef["created_at"]))
                 conn.commit()
-                if precompute:
-                    traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (inc_id,)).fetchone()
-                    traj_count = extract_count(traj_row)
-                    if traj_count == 0:
-                        from app.api.spills import _execute_full_analysis
-                        _execute_full_analysis(inc_id)
-        print("[SEED] Demo data seeded successfully.")
+        print("[SEED] All 3 demo incidents seeded successfully without heavy startup computation.")
     except Exception as e:
         print(f"[SEED ERROR] {e}")
         import traceback; traceback.print_exc()
@@ -153,23 +161,25 @@ def seed_demo_data():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    rss_start = _get_process_rss_mb()
+    print(f"[STARTUP MEMORY] Process RSS before initialization: {rss_start:.2f} MiB")
+
     init_db()
+    rss_post_db = _get_process_rss_mb()
+    print(f"[STARTUP MEMORY] Process RSS after DB init: {rss_post_db:.2f} MiB")
+
     conn = get_connection()
     try:
         spill_count = conn.execute("SELECT count(*) AS cnt FROM oil_spills").fetchone()
         count_val = extract_count(spill_count)
-        traj_count = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id='OILTRACE-DEMO-001'").fetchone()
-        traj_val = extract_count(traj_count)
     except Exception:
         count_val = 0
-        traj_val = 0
     finally:
         conn.close()
 
     current_mode = getattr(settings, "data_mode", getattr(settings, "default_data_mode", "real"))
     should_seed = (
-        count_val == 0
-        or traj_val == 0
+        count_val < len(ALL_DEMO_INCIDENTS)
         or getattr(settings, "simulation_seed_enabled", False)
         or os.getenv("SIMULATION_SEED_ENABLED", "false").lower() in ("true", "1")
         or os.getenv("SEED_DEMO", "false").lower() in ("true", "1")
@@ -177,6 +187,8 @@ async def lifespan(app: FastAPI):
     )
     if should_seed:
         seed_demo_data()
+        rss_post_seed = _get_process_rss_mb()
+        print(f"[STARTUP MEMORY] Process RSS after demo seeding: {rss_post_seed:.2f} MiB")
     else:
         print(f"[STARTUP] {current_mode.upper()} mode active. Seeding skipped.")
     yield

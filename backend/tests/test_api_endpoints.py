@@ -167,7 +167,7 @@ class TestApiEndpoints(unittest.TestCase):
             bbox = sp["bounding_box_geojson"]
             self.assertEqual(bbox["type"], "Polygon")
 
-    def test_11_startup_memory_safety_and_lazy_analysis(self):
+    def test_11_startup_zero_heavy_precomputation_and_asset_verification(self):
         # 1. Verify all 3 incidents are seeded in DB
         resp = self.client.get("/api/spills")
         self.assertEqual(resp.status_code, 200)
@@ -183,21 +183,38 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertEqual(tracks_resp.status_code, 200)
             self.assertGreaterEqual(len(tracks_resp.json()), 1)
 
-        # 2. Test lazy on-demand execution for DEMO-002 and DEMO-003
-        for deferred_id in ["OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]:
+        # 2. Verify all required scene assets exist on disk in data/satellite_scenes
+        scenes_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/satellite_scenes"))
+        required_prefixes = [
+            "S1A_IW_GRDH_1SDV_20240315T060000",
+            "S1B_IW_GRDH_1SDV_20240310T053000",
+            "S1A_IW_GRDH_1SDV_20240318T054500",
+            "S1C_IW_GRDH_1SDV_20240322T061500",
+        ]
+        for prefix in required_prefixes:
+            self.assertTrue(os.path.exists(os.path.join(scenes_dir, f"{prefix}_composite.png")), f"Missing {prefix}_composite.png")
+            self.assertTrue(os.path.exists(os.path.join(scenes_dir, f"{prefix}.tif")), f"Missing {prefix}.tif")
+
+    def test_12_lazy_on_demand_analysis_and_idempotence(self):
+        # Test lazy on-demand execution for all incidents
+        for inc_id in ["OILTRACE-DEMO-001", "OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]:
             # Vessels / attribution endpoint lazily triggers analysis if not yet run
-            attr_resp = self.client.get(f"/api/attribution/{deferred_id}")
+            attr_resp = self.client.get(f"/api/attribution/{inc_id}")
             self.assertEqual(attr_resp.status_code, 200)
             attr_data = attr_resp.json()
             self.assertGreaterEqual(attr_data["count"], 1)
 
             # Analysis summary endpoint returns populated results
-            analysis_resp = self.client.get(f"/api/spills/{deferred_id}/analysis")
+            analysis_resp = self.client.get(f"/api/spills/{inc_id}/analysis")
             self.assertEqual(analysis_resp.status_code, 200)
             an_data = analysis_resp.json()
             self.assertIn("hindcast", an_data)
             self.assertIn("vessels", an_data)
             self.assertGreaterEqual(len(an_data["vessels"]), 1)
+
+            # Idempotent second call
+            analysis_resp2 = self.client.get(f"/api/spills/{inc_id}/analysis")
+            self.assertEqual(analysis_resp2.status_code, 200)
 
 
 if __name__ == "__main__":
