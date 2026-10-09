@@ -134,6 +134,39 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.json()["id"], inc_id)
 
+    def test_10_incident_geographic_consistency(self):
+        resp = self.client.get("/api/spills")
+        self.assertEqual(resp.status_code, 200)
+        spills = {s["id"]: s for s in resp.json()}
+
+        s1 = spills["OILTRACE-DEMO-001"]
+        s2 = spills["OILTRACE-DEMO-002"]
+        s3 = spills["OILTRACE-DEMO-003"]
+
+        c1 = s1["centroid_geojson"]["coordinates"]
+        c2 = s2["centroid_geojson"]["coordinates"]
+        c3 = s3["centroid_geojson"]["coordinates"]
+
+        # 1. Distinct centroids
+        unique_centroids = {tuple(c) for c in [c1, c2, c3]}
+        self.assertEqual(len(unique_centroids), 3)
+
+        # 2. Regional bounds verification
+        # Goa (~15.4N, ~72.7E)
+        self.assertTrue(15.0 <= c1[1] <= 16.0 and 72.0 <= c1[0] <= 73.5, f"Goa centroid out of bounds: {c1}")
+        # Gulf of Kutch (~22.4N, ~69.3E)
+        self.assertTrue(22.0 <= c2[1] <= 23.0 and 68.5 <= c2[0] <= 70.0, f"Kutch centroid out of bounds: {c2}")
+        # Lakshadweep (~10.8N, ~72.5E)
+        self.assertTrue(10.0 <= c3[1] <= 11.5 and 72.0 <= c3[0] <= 73.5, f"Lakshadweep centroid out of bounds: {c3}")
+
+        # 3. Polygon geometry coordinates validity
+        for sp in [s1, s2, s3]:
+            poly = sp["spill_polygon_geojson"]
+            self.assertEqual(poly["type"], "Polygon")
+            self.assertGreaterEqual(len(poly["coordinates"][0]), 4)
+            bbox = sp["bounding_box_geojson"]
+            self.assertEqual(bbox["type"], "Polygon")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -80,7 +80,7 @@ def _seed_incident(incident_id: str):
 ALL_DEMO_INCIDENTS = ["OILTRACE-DEMO-001", "OILTRACE-DEMO-002", "OILTRACE-DEMO-003"]
 
 def seed_demo_data():
-    """Seed all deterministic demo incidents idempotently if not already present."""
+    """Seed all deterministic demo incidents idempotently and synchronize geometry."""
     scenes_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/satellite_scenes"))
     if not os.path.exists(os.path.join(scenes_dir, "S1A_IW_GRDH_1SDV_20240315T060000_composite.png")):
         from app.simulation.satellite_imagery_generator import generate_mock_satellite_scenes
@@ -88,12 +88,53 @@ def seed_demo_data():
 
     conn = get_connection()
     try:
+        from app.simulation.generator import generate_demo_incident
         for inc_id in ALL_DEMO_INCIDENTS:
+            demo = generate_demo_incident(incident_id=inc_id)
+            sp = demo["spill"]
+            img = demo["satellite_image"]
             row = conn.execute("SELECT id FROM oil_spills WHERE id=?", (inc_id,)).fetchone()
             if not row:
                 _seed_incident(inc_id)
             else:
-                conn.execute("UPDATE oil_spills SET data_mode='simulation', provenance='synthetic' WHERE id=?", (inc_id,))
+                conn.execute("""UPDATE oil_spills SET
+                    satellite_image_id=?, incident_name=?, status=?, detected_class=?, detection_confidence=?,
+                    spill_polygon_geojson=?, centroid_geojson=?, bounding_box_geojson=?, area_km2=?, perimeter_km=?,
+                    length_km=?, width_km=?, orientation_deg=?, compactness=?, satellite_acquisition_time=?,
+                    data_mode='simulation', provenance='synthetic', region_name=?, severity=?, updated_at=?
+                    WHERE id=?""",
+                    (sp["satellite_image_id"], sp["incident_name"], sp["status"], sp["detected_class"],
+                     sp["detection_confidence"], sp["spill_polygon_geojson"], sp["centroid_geojson"],
+                     sp["bounding_box_geojson"], sp["area_km2"], sp["perimeter_km"], sp["length_km"],
+                     sp["width_km"], sp["orientation_deg"], sp["compactness"], sp["satellite_acquisition_time"],
+                     sp["region_name"], sp["severity"], sp["updated_at"], inc_id))
+                conn.execute("""UPDATE satellite_images SET
+                    filename=?, crs=?, resolution_m=?, acquisition_time=?, region_name=?, bounds_geojson=?,
+                    satellite_name=?, data_mode='simulation', provenance='synthetic', metadata_json=?
+                    WHERE id=?""",
+                    (img["filename"], img["crs"], img["resolution_m"], img["acquisition_time"],
+                     img["region_name"], img["bounds_geojson"], img["satellite_name"], img["metadata_json"], img["id"]))
+                for v in demo["vessels"]:
+                    conn.execute("""INSERT OR IGNORE INTO vessels
+                        (mmsi,imo,vessel_name,vessel_type,call_sign,flag,length_m,beam_m,draught_m,gross_tonnage,data_mode,provenance,created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (v["mmsi"],v["imo"],v["vessel_name"],v["vessel_type"],v.get("call_sign"),v.get("flag"),
+                         v.get("length_m"),v.get("beam_m"),v.get("draught_m"),v.get("gross_tonnage"),
+                         v["data_mode"],v["provenance"],v["created_at"]))
+                for t in demo["vessel_tracks"]:
+                    conn.execute("""INSERT OR REPLACE INTO vessel_tracks
+                        (id,mmsi,spill_id,track_geojson,start_time,end_time,point_count,data_mode,provenance)
+                        VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (t["id"],t["mmsi"],t["spill_id"],t["track_geojson"],t["start_time"],t["end_time"],
+                         t["point_count"],t["data_mode"],t["provenance"]))
+                for ef in demo["environmental_fields"]:
+                    conn.execute("""INSERT OR REPLACE INTO environmental_fields
+                        (id,spill_id,field_type,timestamp,valid_time_start,valid_time_end,source,source_version,
+                         resolution_deg,region_geojson,field_data_json,data_mode,provenance,created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (ef["id"],ef["spill_id"],ef["field_type"],ef["timestamp"],ef.get("valid_time_start"),
+                         ef.get("valid_time_end"),ef["source"],ef.get("source_version"),ef.get("resolution_deg"),
+                         ef.get("region_geojson"),ef["field_data_json"],ef["data_mode"],ef["provenance"],ef["created_at"]))
                 conn.commit()
                 traj_row = conn.execute("SELECT count(*) AS cnt FROM particle_trajectories WHERE spill_id=?", (inc_id,)).fetchone()
                 traj_count = extract_count(traj_row)
