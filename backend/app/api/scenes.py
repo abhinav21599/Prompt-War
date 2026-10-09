@@ -286,8 +286,17 @@ def run_interactive_detection(payload: dict):
     now_ts = datetime.now(timezone.utc).isoformat()
     prov_val = det_res.get("provenance", "observed" if data_mode == "real" else "synthetic")
 
+    mapping = {
+        "S1A_IW_GRDH_1SDV_20240315T060000_demo": "OILTRACE-DEMO-001",
+        "S1A_IW_GRDH_1SDV_20240318T054500_kutch": "OILTRACE-DEMO-002",
+        "S1C_IW_GRDH_1SDV_20240322T061500_lakshadweep": "OILTRACE-DEMO-003",
+    }
+    spill_id = mapping.get(scene_id, "OILTRACE-DEMO-001")
+
     return {
+        "status": "success",
         "scene_id": scene_id,
+        "spill_id": spill_id,
         "model_version": detector.model_version,
         "threshold": threshold,
         "confidence": det_res.get("confidence", 0.942),

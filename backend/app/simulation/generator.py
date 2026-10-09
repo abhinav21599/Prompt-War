@@ -637,6 +637,23 @@ def generate_demo_incident(incident_id: str = "OILTRACE-DEMO-001"):
         },
     ]
 
+    # 3. Deterministic preview hindcast & forecast particle trajectories
+    hcast_rec = _generate_preview_hindcast(incident_id, scen, geom, t0, rng, now)
+    fcast_rec = _generate_preview_forecast(incident_id, scen, geom, t0, rng, now)
+    particle_trajectories = [hcast_rec, fcast_rec]
+
+    # 4. Deterministic candidate vessel attribution ranking
+    attributions = _generate_preview_attributions(incident_id, scen, geom, t0, now, hcast_rec)
+
+    # 5. Deterministic analysis run & audit logs
+    analysis_run, audit_logs = _generate_preview_analysis_run(incident_id, scen, geom, t0, now, hcast_rec, attributions)
+
+    # 6. Incident alert
+    alert = _generate_preview_alert(incident_id, scen, geom, t0, now)
+
+    # 7. Comprehensive 15-section investigation report
+    investigation_report = _generate_preview_report(incident_id, scen, geom, t0, now, hcast_rec, fcast_rec, attributions, sat_image)
+
     return {
         "incident_id": incident_id,
         "satellite_image": sat_image,
@@ -646,6 +663,12 @@ def generate_demo_incident(incident_id: str = "OILTRACE-DEMO-001"):
         "vessel_tracks": tracks,
         "environmental_fields": env_fields,
         "env_data": env_data,
+        "particle_trajectories": particle_trajectories,
+        "attributions": attributions,
+        "analysis_run": analysis_run,
+        "audit_logs": audit_logs,
+        "alert": alert,
+        "investigation_report": investigation_report,
         "metadata": {
             "seed": scen["seed"],
             "data_mode": "simulation",
@@ -654,4 +677,598 @@ def generate_demo_incident(incident_id: str = "OILTRACE-DEMO-001"):
             "t0": t0.isoformat(),
             "candidate_mmsi": scen["candidate_mmsi"],
         },
+    }
+
+
+def _generate_preview_hindcast(incident_id: str, scen: Dict, geom: Dict, t0: datetime, rng, now: datetime) -> Dict[str, Any]:
+    n_particles = 50
+    n_steps = 24  # 12 hours with 30 min dt
+    dt_m = 30
+    c_lat = geom["centroid_lat"]
+    c_lon = geom["centroid_lon"]
+    orig_lat = scen["origin_lat"]
+    orig_lon = scen["origin_lon"]
+
+    particles_history = []
+    for p_idx in range(n_particles):
+        p_lat = c_lat + float(rng.normal(0, 0.002))
+        p_lon = c_lon + float(rng.normal(0, 0.002))
+        traj = [{
+            "step": 0,
+            "lat": round(p_lat, 6),
+            "lon": round(p_lon, 6),
+            "timestamp": t0.isoformat(),
+            "mode": "reconstructed"
+        }]
+        for step in range(1, n_steps + 1):
+            frac = step / n_steps
+            target_lat = c_lat + frac * (orig_lat - c_lat)
+            target_lon = c_lon + frac * (orig_lon - c_lon)
+            sigma = 0.003 * math.sqrt(step)
+            step_lat = target_lat + float(rng.normal(0, sigma))
+            step_lon = target_lon + float(rng.normal(0, sigma))
+            ts = t0 - timedelta(minutes=step * dt_m)
+            traj.append({
+                "step": -step,
+                "lat": round(step_lat, 6),
+                "lon": round(step_lon, 6),
+                "timestamp": ts.isoformat(),
+                "mode": "reconstructed"
+            })
+        particles_history.append({"particle_id": p_idx, "trajectory": traj})
+
+    n_sides = 16
+    angles = [i * 2 * math.pi / n_sides for i in range(n_sides)]
+    sigma_deg = 0.075
+    ellipse_coords = [
+        [round(orig_lon + sigma_deg * math.cos(a), 6), round(orig_lat + (sigma_deg * 0.7) * math.sin(a), 6)]
+        for a in angles
+    ]
+    ellipse_coords.append(ellipse_coords[0])
+
+    origin_time = t0 - timedelta(hours=12)
+    return {
+        "id": f"TRAJ-HINDCAST-{incident_id}",
+        "spill_id": incident_id,
+        "run_type": "hindcast",
+        "windage_coefficient": 0.035,
+        "particle_count": n_particles,
+        "integration_timestep_min": dt_m,
+        "integration_hours": 12.0,
+        "integration_method": "Lagrangian RK4 Ensemble (Simulation Preview)",
+        "particles_json": json.dumps(particles_history),
+        "origin_region_geojson": json.dumps({"type": "Polygon", "coordinates": [ellipse_coords]}),
+        "origin_centroid_geojson": json.dumps({"type": "Point", "coordinates": [round(orig_lon, 6), round(orig_lat, 6)]}),
+        "origin_time_estimate": origin_time.isoformat(),
+        "origin_time_uncertainty_h": 1.5,
+        "spatial_uncertainty_km": 3.2,
+        "environmental_source": "SYNTHETIC_OCEAN_CURRENT_v1 + SYNTHETIC_ERA5_v1",
+        "data_mode": "simulation",
+        "provenance": "synthetic",
+        "created_at": now.isoformat(),
+        "_particles": particles_history,
+    }
+
+
+def _generate_preview_forecast(incident_id: str, scen: Dict, geom: Dict, t0: datetime, rng, now: datetime) -> Dict[str, Any]:
+    n_particles = 50
+    n_steps = 24  # 24 hours with 60 min dt
+    dt_m = 60
+    c_lat = geom["centroid_lat"]
+    c_lon = geom["centroid_lon"]
+
+    u_eff = scen["current_u"] + 0.035 * scen["wind_u10"]
+    v_eff = scen["current_v"] + 0.035 * scen["wind_v10"]
+    dlat_per_h = (v_eff * 3600.0) / 111320.0
+    dlon_per_h = (u_eff * 3600.0) / (111320.0 * math.cos(math.radians(c_lat)))
+
+    particles_history = []
+    for p_idx in range(n_particles):
+        p_lat = c_lat + float(rng.normal(0, 0.002))
+        p_lon = c_lon + float(rng.normal(0, 0.002))
+        traj = [{
+            "step": 0,
+            "lat": round(p_lat, 6),
+            "lon": round(p_lon, 6),
+            "timestamp": t0.isoformat(),
+            "mode": "predicted"
+        }]
+        for step in range(1, n_steps + 1):
+            sigma = 0.004 * math.sqrt(step)
+            step_lat = p_lat + step * dlat_per_h + float(rng.normal(0, sigma))
+            step_lon = p_lon + step * dlon_per_h + float(rng.normal(0, sigma))
+            ts = t0 + timedelta(minutes=step * dt_m)
+            traj.append({
+                "step": step,
+                "lat": round(step_lat, 6),
+                "lon": round(step_lon, 6),
+                "timestamp": ts.isoformat(),
+                "mode": "predicted"
+            })
+        particles_history.append({"particle_id": p_idx, "trajectory": traj})
+
+    return {
+        "id": f"TRAJ-FORECAST-{incident_id}",
+        "spill_id": incident_id,
+        "run_type": "forecast",
+        "windage_coefficient": 0.035,
+        "particle_count": n_particles,
+        "integration_timestep_min": dt_m,
+        "integration_hours": 24.0,
+        "integration_method": "Lagrangian RK4 Ensemble (Simulation Preview)",
+        "particles_json": json.dumps(particles_history),
+        "origin_region_geojson": None,
+        "origin_centroid_geojson": None,
+        "origin_time_estimate": None,
+        "origin_time_uncertainty_h": None,
+        "spatial_uncertainty_km": 4.5,
+        "environmental_source": "SYNTHETIC_OCEAN_CURRENT_v1 + SYNTHETIC_ERA5_v1",
+        "data_mode": "simulation",
+        "provenance": "synthetic",
+        "created_at": now.isoformat(),
+        "_particles": particles_history,
+    }
+
+
+def _generate_preview_attributions(incident_id: str, scen: Dict, geom: Dict, t0: datetime, now: datetime, hindcast_data: Dict) -> List[Dict[str, Any]]:
+    fleet = scen["fleet"]
+    cand_mmsi = scen["candidate_mmsi"]
+    weights = settings.attribution_weights
+
+    attributions = []
+    cand_v = next((v for v in fleet if v["mmsi"] == cand_mmsi), fleet[0])
+    cand_attr = {
+        "id": f"ATTR-{incident_id}-{cand_v['mmsi']}",
+        "spill_id": incident_id,
+        "mmsi": cand_v["mmsi"],
+        "rank": 1,
+        "distance_km": 0.42,
+        "time_delta_h": 0.25,
+        "track_overlap_score": 0.94,
+        "heading_compat_score": 0.92,
+        "ais_continuity_score": 0.65,
+        "norm_proximity": 0.95,
+        "norm_temporal": 0.94,
+        "norm_trajectory": 0.92,
+        "norm_heading": 0.91,
+        "norm_continuity": 0.68,
+        "weight_proximity": weights.get("proximity", 0.35),
+        "weight_temporal": weights.get("temporal", 0.25),
+        "weight_trajectory": weights.get("trajectory", 0.20),
+        "weight_heading": weights.get("heading", 0.10),
+        "weight_continuity": weights.get("continuity", 0.10),
+        "evidence_score": 0.892,
+        "data_confidence": 0.940,
+        "final_score": 0.838,
+        "behaviour_observations_json": json.dumps([
+            f"AIS reporting gap of 50 minutes observed during transit through {scen['region_name']}.",
+            "Vessel speed dropped from 14.2 kn to 4.1 kn within 1.2 km of reconstructed release origin.",
+            "Course deviation of 28° recorded coincident with estimated discharge window."
+        ]),
+        "ais_gap_detected": 1,
+        "ais_gap_duration_min": 50.0,
+        "slowdown_observed": 1,
+        "course_change_observed": 1,
+        "ais_coverage_pct": 88.5,
+        "spatial_radius_km": 25.0,
+        "temporal_window_h": 24.0,
+        "data_mode": "simulation",
+        "provenance": "synthetic",
+        "created_at": now.isoformat(),
+    }
+    attributions.append(cand_attr)
+
+    other_vessels = [v for v in fleet if v["mmsi"] != cand_mmsi]
+    preset_scores = [
+        (18.4, 3.2, 0.45, 0.52, 0.95, 0.42, 0.88, 0.370),
+        (26.1, 5.8, 0.28, 0.38, 0.98, 0.29, 0.85, 0.246),
+        (34.8, 8.4, 0.15, 0.25, 0.92, 0.18, 0.82, 0.148),
+        (42.5, 11.2, 0.08, 0.15, 0.90, 0.11, 0.80, 0.088),
+    ]
+    for idx, v in enumerate(other_vessels):
+        r = idx + 2
+        sc = preset_scores[idx % len(preset_scores)]
+        dist_km, dt_h, traj_s, head_s, cont_s, evid_s, conf_s, fin_s = sc
+        attr = {
+            "id": f"ATTR-{incident_id}-{v['mmsi']}",
+            "spill_id": incident_id,
+            "mmsi": v["mmsi"],
+            "rank": r,
+            "distance_km": dist_km,
+            "time_delta_h": dt_h,
+            "track_overlap_score": traj_s,
+            "heading_compat_score": head_s,
+            "ais_continuity_score": cont_s,
+            "norm_proximity": round(max(0.0, 1.0 - dist_km / 50.0), 4),
+            "norm_temporal": round(max(0.0, 1.0 - dt_h / 24.0), 4),
+            "norm_trajectory": traj_s,
+            "norm_heading": head_s,
+            "norm_continuity": cont_s,
+            "weight_proximity": weights.get("proximity", 0.35),
+            "weight_temporal": weights.get("temporal", 0.25),
+            "weight_trajectory": weights.get("trajectory", 0.20),
+            "weight_heading": weights.get("heading", 0.10),
+            "weight_continuity": weights.get("continuity", 0.10),
+            "evidence_score": evid_s,
+            "data_confidence": conf_s,
+            "final_score": fin_s,
+            "behaviour_observations_json": json.dumps([
+                "Continuous AIS transmission with standard operating speed profile.",
+                "Transit corridor remained outside primary reconstructed release envelope."
+            ]),
+            "ais_gap_detected": 0,
+            "ais_gap_duration_min": 0.0,
+            "slowdown_observed": 0,
+            "course_change_observed": 0,
+            "ais_coverage_pct": 98.2,
+            "spatial_radius_km": 50.0,
+            "temporal_window_h": 24.0,
+            "data_mode": "simulation",
+            "provenance": "synthetic",
+            "created_at": now.isoformat(),
+        }
+        attributions.append(attr)
+    return attributions
+
+
+def _generate_preview_analysis_run(incident_id: str, scen: Dict, geom: Dict, t0: datetime, now: datetime, hindcast_data: Dict, attributions: List[Dict]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    run_id = f"RUN-{incident_id}"
+    weights = settings.attribution_weights
+    started_at = (t0 + timedelta(minutes=15)).isoformat()
+    completed_at = (t0 + timedelta(minutes=18)).isoformat()
+
+    run = {
+        "id": run_id,
+        "spill_id": incident_id,
+        "run_type": "investigation_pipeline",
+        "status": "completed",
+        "data_mode": "simulation",
+        "satellite_scene_id": scen["scene_id"],
+        "satellite_source": "Sentinel-1 SAR",
+        "capture_timestamp": t0.isoformat(),
+        "model_version": "1.0.0-demo",
+        "preprocessing_version": "1.2.0",
+        "model_threshold": 0.42,
+        "environment_source": "CMEMS Surface Hydrodynamics & ERA5 Atmospheric Winds",
+        "environment_time_range_start": (t0 - timedelta(hours=24)).isoformat(),
+        "environment_time_range_end": (t0 + timedelta(hours=24)).isoformat(),
+        "windage_coefficient": 0.035,
+        "particle_count": 50,
+        "integration_timestep_min": 15,
+        "hindcast_hours": 12.0,
+        "forecast_hours": 24.0,
+        "ais_source": "Synthetic AIS Stream",
+        "ais_coverage_pct": 96.4,
+        "scoring_config_json": json.dumps(weights),
+        "error_message": None,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "report_version": "1.0",
+    }
+
+    events = [
+        {"event_type": "scene_ingested", "event_data": {"scene_id": scen["scene_id"], "region": scen["region_name"]}},
+        {"event_type": "preprocessing_completed", "event_data": {"calibration": "sigma0", "speckle_filter": "Lee-Enhanced 5x5"}},
+        {"event_type": "detection_completed", "event_data": {"confidence": scen["confidence"], "class": "suspected_oil"}},
+        {"event_type": "geometry_completed", "event_data": {"area_km2": geom["area_km2"], "perimeter_km": geom["perimeter_km"]}},
+        {"event_type": "environment_fetched", "event_data": {"source": "SYNTHETIC_OCEAN_CURRENT_v1", "resolution_deg": 0.083}},
+        {"event_type": "hindcast_completed", "event_data": {"particles": 50, "origin_lat": scen["origin_lat"], "origin_lon": scen["origin_lon"]}},
+        {"event_type": "ais_correlated", "event_data": {"vessels_screened": len(scen["fleet"]), "candidates_passed": len(attributions)}},
+        {"event_type": "attribution_completed", "event_data": {"top_candidate_mmsi": scen["candidate_mmsi"], "score": 0.838}},
+        {"event_type": "forecast_completed", "event_data": {"horizon_hours": 24.0, "particles": 50}},
+        {"event_type": "report_generated", "event_data": {"report_version": "1.0", "sections_count": 15}},
+    ]
+
+    audit_logs = []
+    for idx, ev in enumerate(events):
+        ev_time = (t0 + timedelta(minutes=15 + idx * 0.3)).isoformat()
+        audit_logs.append({
+            "id": f"AUD-{incident_id}-{idx+1:02d}",
+            "analysis_run_id": run_id,
+            "event_type": ev["event_type"],
+            "event_data_json": json.dumps(ev["event_data"]),
+            "timestamp": ev_time,
+        })
+
+    return run, audit_logs
+
+
+def _generate_preview_alert(incident_id: str, scen: Dict, geom: Dict, t0: datetime, now: datetime) -> Dict[str, Any]:
+    return {
+        "id": f"ALT-{incident_id}",
+        "spill_id": incident_id,
+        "scene_id": scen["scene_id"],
+        "title": f"High-Confidence Slick Detected — {scen['region_name']}",
+        "incident_name": scen["incident_name"],
+        "alert_time": t0.isoformat(),
+        "acquisition_time": t0.isoformat(),
+        "satellite_name": scen["satellite_name"],
+        "severity": "high",
+        "status": "active",
+        "confidence": scen["confidence"],
+        "detection_confidence": scen["confidence"],
+        "area_km2": geom["area_km2"],
+        "source_scene": scen["scene_id"],
+        "location_geojson": json.dumps(geom["centroid_geojson"]),
+        "centroid_geojson": json.dumps(geom["centroid_geojson"]),
+        "polygon_geojson": json.dumps(geom["polygon_geojson"]),
+        "model_version": "1.0.0-demo",
+        "data_mode": "simulation",
+        "provenance": "synthetic",
+        "pipeline_run_id": f"RUN-{incident_id}",
+        "investigation_spill_id": incident_id,
+        "acknowledged_at": None,
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    }
+
+
+def _generate_preview_report(
+    incident_id: str,
+    scen: Dict,
+    geom: Dict,
+    t0: datetime,
+    now: datetime,
+    hindcast_data: Dict,
+    forecast_data: Dict,
+    attributions: List[Dict],
+    sat_image: Dict
+) -> Dict[str, Any]:
+    cand_v = next((v for v in scen["fleet"] if v["mmsi"] == scen["candidate_mmsi"]), scen["fleet"][0])
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    report_id = f"RPT-{incident_id}-OFFICIAL"
+
+    sections = {
+        "1_incident_overview": {
+            "title": "1. Incident Overview",
+            "incident_id": incident_id,
+            "incident_name": scen["incident_name"],
+            "region": scen["region_name"],
+            "severity": "HIGH",
+            "status": "analyzed",
+            "observation_time": t0.isoformat(),
+        },
+        "2_data_provenance": {
+            "title": "2. Data Provenance & Mode Flag",
+            "data_mode": "SIMULATION (SYNTHETIC)",
+            "is_simulation": True,
+            "provenance": "synthetic",
+            "environmental_source": "SYNTHETIC_HYDRODYNAMICS_v1 + SYNTHETIC_ERA5_v1",
+            "seed": scen["seed"],
+            "pipeline_version": "1.0.0",
+        },
+        "3_satellite_detection": {
+            "title": "3. Satellite SAR Detection",
+            "scene_id": sat_image["id"],
+            "satellite_name": sat_image["satellite_name"],
+            "instrument": "C-SAR (5.405 GHz)",
+            "acquisition_time": sat_image["acquisition_time"],
+            "crs": sat_image["crs"],
+            "resolution_m": sat_image["resolution_m"],
+            "model_version": "1.0.0-demo",
+            "detection_confidence": scen["confidence"],
+            "detection_threshold": 0.42,
+            "preprocessing_version": "1.2.0",
+        },
+        "4_spill_geometry": {
+            "title": "4. Spill Geometry & Dimensions",
+            "area_km2": geom["area_km2"],
+            "perimeter_km": geom["perimeter_km"],
+            "length_km": geom["length_km"],
+            "width_km": geom["width_km"],
+            "orientation_deg": geom["orientation_deg"],
+            "compactness": geom["compactness"],
+            "projection": "EPSG:6933 (Equal-Area Cylindrical)",
+        },
+        "5_environmental_conditions": {
+            "title": "5. Environmental Conditions & Forcing",
+            "current_source": "SYNTHETIC_OCEAN_CURRENT_v1",
+            "wind_source": "SYNTHETIC_ERA5_v1",
+            "mean_current_speed_ms": round(math.sqrt(scen["current_u"]**2 + scen["current_v"]**2), 3),
+            "mean_wind_speed_ms": round(math.sqrt(scen["wind_u10"]**2 + scen["wind_v10"]**2), 2),
+            "windage_coefficient": 0.035,
+            "forcing_formula": "V_particle = V_current + 0.035 * V_wind + StochasticWalk",
+        },
+        "6_lagrangian_hindcast": {
+            "title": "6. Lagrangian Hindcast Reconstruction",
+            "particle_count": 50,
+            "integration_hours": 12.0,
+            "timestep_min": 15,
+            "integration_method": "RK4 (4th-Order Runge-Kutta Simulation Preview)",
+            "status": "complete",
+        },
+        "7_origin_estimate": {
+            "title": "7. Estimated Origin Region & Window",
+            "estimated_spill_time": hindcast_data["origin_time_estimate"],
+            "temporal_uncertainty_h": hindcast_data["origin_time_uncertainty_h"],
+            "spatial_uncertainty_km": hindcast_data["spatial_uncertainty_km"],
+            "centroid_geojson": json.loads(hindcast_data["origin_centroid_geojson"]),
+            "origin_region_geojson": json.loads(hindcast_data["origin_region_geojson"]),
+        },
+        "8_ais_screening_summary": {
+            "title": "8. AIS Traffic Screening Summary",
+            "total_vessels_detected": len(scen["fleet"]),
+            "spatial_candidates_count": len(attributions),
+            "temporal_candidates_count": len(attributions),
+            "trajectory_candidates_count": len(attributions),
+            "screening_radius_km": 50.0,
+            "temporal_window_h": 24.0,
+        },
+        "9_candidate_vessel_roster": {
+            "title": "9. Candidate Vessel Roster",
+            "candidates": [
+                {
+                    "rank": a["rank"],
+                    "vessel_name": next((v["vessel_name"] for v in scen["fleet"] if v["mmsi"] == a["mmsi"]), "Unknown"),
+                    "mmsi": a["mmsi"],
+                    "vessel_type": next((v["vessel_type"] for v in scen["fleet"] if v["mmsi"] == a["mmsi"]), "tanker"),
+                    "flag": next((v.get("flag", "IN") for v in scen["fleet"] if v["mmsi"] == a["mmsi"]), "IN"),
+                    "distance_km": a["distance_km"],
+                    "evidence_score": a["evidence_score"],
+                    "data_confidence": a["data_confidence"],
+                    "final_score": a["final_score"],
+                }
+                for a in attributions
+            ],
+        },
+        "10_attribution_evidence": {
+            "title": "10. Attribution Evidence & Feature Breakdown",
+            "scoring_methodology": "Weighted Evidential Model: Proximity (35%), Temporal (25%), Trajectory (20%), Heading (10%), Continuity (10%)",
+            "top_candidate": {
+                "mmsi": cand_v["mmsi"],
+                "vessel_name": cand_v["vessel_name"],
+                "final_score": attributions[0]["final_score"],
+                "evidence_score": attributions[0]["evidence_score"],
+                "observations": json.loads(attributions[0]["behaviour_observations_json"]),
+            },
+        },
+        "11_forward_forecast": {
+            "title": "11. Forward Dispersion Forecast",
+            "forecast_hours": 24.0,
+            "particle_count": 50,
+            "projected_drift_heading": "North-East",
+            "threat_status": "Coastal monitoring active",
+        },
+        "12_uncertainty_quantification": {
+            "title": "12. Uncertainty Quantification",
+            "spatial_confidence_radius_km": 3.2,
+            "temporal_window_hours": 1.5,
+            "model_confidence_level": "94.0%",
+            "methodology": "Monte Carlo Particle Dispersion Ensemble",
+        },
+        "13_limitations": {
+            "title": "13. Methodological Limitations",
+            "notes": [
+                "Synthetic simulation data demonstration record.",
+                "SAR backscatter damping may be influenced by natural biogenic slicks or low-wind areas.",
+                "Correlation ranking constitutes statistical investigative evidence, not judicial proof of liability.",
+            ],
+        },
+        "14_reproducibility": {
+            "title": "14. Reproducibility & Cryptographic Provenance",
+            "scenario_seed": scen["seed"],
+            "sha256_checksum": hashlib.sha256(f"{incident_id}-{scen['seed']}-{sat_image['id']}".encode()).hexdigest(),
+            "deterministic": True,
+        },
+        "15_disclaimer": {
+            "title": "15. Legal & Forensic Disclaimer",
+            "text": "This report is generated by OILTRACE AI for maritime intelligence, initial response coordination, and forensic triage. Final legal attribution requires authenticated physical sampling and statutory flag state inspection.",
+        },
+    }
+
+    rows_html = "".join([
+        f"""<tr>
+          <td>{c['rank']}</td>
+          <td>{c['vessel_name']}</td>
+          <td>{c['vessel_type']}</td>
+          <td>{c['mmsi']}</td>
+          <td>{c['distance_km']} km</td>
+          <td>{c['evidence_score']}</td>
+          <td>{c['data_confidence']}</td>
+          <td><strong>{c['final_score']}</strong></td>
+        </tr>"""
+        for c in sections["9_candidate_vessel_roster"]["candidates"]
+    ])
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>OILTRACE AI — Investigation Dossier {incident_id}</title>
+<style>
+body{{font-family:'IBM Plex Mono',monospace;background:#0B0F14;color:#E6EAEE;margin:0;padding:32px;line-height:1.5;}}
+h1{{color:#3FA7D6;font-size:22px;margin-bottom:4px;letter-spacing:-0.5px;}}
+h2{{color:#A7B0BA;font-size:14px;border-bottom:1px solid #232B34;padding-bottom:6px;margin-top:28px;text-transform:uppercase;letter-spacing:0.5px;}}
+.badge{{display:inline-block;padding:3px 8px;border-radius:3px;font-size:11px;font-weight:600;}}
+.sim{{background:#2D2416;color:#C8A45D;border:1px solid #C8A45D;}}
+.meta{{color:#7F8A96;font-size:12px;margin-bottom:20px;}}
+table{{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;}}
+th{{text-align:left;padding:8px;background:#151B22;color:#A7B0BA;border-bottom:1px solid #232B34;}}
+td{{padding:8px;border-bottom:1px solid #19212A;color:#E6EAEE;}} tr:hover td{{background:#19212A;}}
+.section{{background:#151B22;border:1px solid #232B34;border-radius:4px;padding:14px;margin-bottom:12px;}}
+.kv{{display:grid;grid-template-columns:220px 1fr;gap:4px 16px;}} .k{{color:#7F8A96;font-size:12px;}} .v{{color:#E6EAEE;font-size:12px;font-weight:500;}}
+.warning{{background:#1A1408;border:1px solid #C9A24E;border-radius:4px;padding:12px;color:#C9A24E;font-size:12px;margin-bottom:20px;}}
+.footer{{color:#59636E;font-size:11px;margin-top:40px;border-top:1px solid #232B34;padding-top:16px;}}
+</style></head>
+<body>
+<h1>OILTRACE AI &mdash; Maritime Evidence Dossier</h1>
+<div class="meta">Dossier ID: {report_id} &nbsp;|&nbsp; Incident: {incident_id} &nbsp;|&nbsp; Generated: {now_str} &nbsp;|&nbsp; <span class="badge sim">SIMULATION PREVIEW</span></div>
+
+<div class="warning">
+  <strong>LEGAL DISCLAIMER &amp; LIMITATION:</strong> This dossier is generated from deterministic synthetic simulation records (Demo Mode).
+  Correlation ranking represents statistical evidential correlation and does not constitute judicial attribution or legal liability.
+</div>
+
+<h2>1. Incident Overview</h2>
+<div class="section"><div class="kv">
+  <span class="k">Incident ID</span><span class="v">{incident_id}</span>
+  <span class="k">Incident Name</span><span class="v">{scen["incident_name"]}</span>
+  <span class="k">Operational Sector</span><span class="v">{scen["region_name"]}</span>
+  <span class="k">Observation Time</span><span class="v">{t0.isoformat()}</span>
+  <span class="k">Severity</span><span class="v">HIGH</span>
+  <span class="k">Data Mode</span><span class="v">SIMULATION (Synthetic Scenario)</span>
+</div></div>
+
+<h2>2. Satellite SAR Detection &amp; Characterization</h2>
+<div class="section"><div class="kv">
+  <span class="k">Scene ID</span><span class="v">{sat_image["id"]}</span>
+  <span class="k">Satellite Sensor</span><span class="v">{sat_image["satellite_name"]} (C-Band SAR)</span>
+  <span class="k">Spill Sfc Area</span><span class="v">{geom["area_km2"]:.3f} km&sup2;</span>
+  <span class="k">Perimeter / Length</span><span class="v">{geom["perimeter_km"]:.2f} km / {geom["length_km"]:.2f} km</span>
+  <span class="k">Detection Confidence</span><span class="v">{scen["confidence"] * 100:.1f}%</span>
+  <span class="k">Centroid Coordinates</span><span class="v">{geom["centroid_lat"]:.5f}&deg;N, {geom["centroid_lon"]:.5f}&deg;E</span>
+</div></div>
+
+<h2>3. Reverse Lagrangian Hindcast (Origin Estimate)</h2>
+<div class="section"><div class="kv">
+  <span class="k">Estimated Release Time</span><span class="v">{hindcast_data["origin_time_estimate"]}</span>
+  <span class="k">Origin Coordinates</span><span class="v">{scen["origin_lat"]:.5f}&deg;N, {scen["origin_lon"]:.5f}&deg;E</span>
+  <span class="k">Spatial Uncertainty</span><span class="v">&plusmn;{hindcast_data["spatial_uncertainty_km"]} km</span>
+  <span class="k">Temporal Uncertainty</span><span class="v">&plusmn;{hindcast_data["origin_time_uncertainty_h"]} h</span>
+  <span class="k">Integration Method</span><span class="v">Lagrangian RK4 Ensemble (50 particles)</span>
+</div></div>
+
+<h2>4. Candidate Vessel Correlation &amp; Attribution Ranking</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Rank</th><th>Vessel Name</th><th>Type</th><th>MMSI</th><th>Distance to Origin</th><th>Evidence Score</th><th>Data Confidence</th><th>Final Score</th></tr></thead>
+  <tbody>{rows_html}</tbody>
+</table>
+</div>
+
+<h2>5. Primary Suspect Forensic Evidence Breakdown</h2>
+<div class="section">
+  <div class="kv" style="margin-bottom:8px;">
+    <span class="k">Vessel Name / MMSI</span><span class="v">{cand_v["vessel_name"]} ({cand_v["mmsi"]})</span>
+    <span class="k">Flag State / IMO</span><span class="v">{cand_v.get("flag","IN")} / IMO {cand_v["imo"]}</span>
+    <span class="k">Attribution Confidence</span><span class="v">{attributions[0]["final_score"] * 100:.1f}% (Rank #1)</span>
+  </div>
+  <ul style="color:#A7B0BA;font-size:12px;margin:8px 0 0 16px;padding:0;">
+    <li>AIS transmission gap of 50 minutes during transit through {scen["region_name"]}.</li>
+    <li>Speed reduction from 14.2 kn to 4.1 kn within 1.2 km of reconstructed release origin.</li>
+    <li>Course deviation of 28&deg; recorded coincident with estimated discharge window.</li>
+  </ul>
+</div>
+
+<h2>6. Methodological Limitations &amp; Provenance</h2>
+<div class="section"><div class="kv">
+  <span class="k">Analysis Seed</span><span class="v">{scen["seed"]}</span>
+  <span class="k">Cryptographic Checksum</span><span class="v">{hashlib.sha256(f"{incident_id}-{scen['seed']}".encode()).hexdigest()[:24]}...</span>
+  <span class="k">Deterministic Preview</span><span class="v">Yes &mdash; reproducible on fixed scenario seeds</span>
+</div></div>
+
+<div class="footer">
+  OILTRACE AI | National Maritime Intelligence Directorate | Satellite-Based Marine Oil Spill Detection
+  <br>Official Evidence Dossier &bull; Generated for Technical &amp; Operational Evaluation
+</div>
+</body></html>"""
+
+    return {
+        "id": report_id,
+        "spill_id": incident_id,
+        "report_version": "1.0",
+        "status": "complete",
+        "report_html": html,
+        "report_pdf_path": None,
+        "sections_json": json.dumps(sections),
+        "generated_at": now.isoformat(),
+        "created_at": now.isoformat(),
     }

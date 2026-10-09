@@ -125,6 +125,7 @@ def get_alert_detail(alert_id: str):
 
 
 @router.post("/{alert_id}/ack")
+@router.post("/{alert_id}/acknowledge")
 def acknowledge_alert(alert_id: str, payload: Optional[AlertAckPayload] = None):
     conn = get_connection()
     try:

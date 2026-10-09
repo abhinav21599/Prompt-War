@@ -39,16 +39,41 @@ def _db_fallback_vessels(spill_id: str):
     from app.database.engine import get_connection, row_to_dict
     conn = get_connection()
     try:
-        rows = conn.execute("""
-            SELECT vt.mmsi, vt.latitude, vt.longitude, vt.sog_knots, vt.cog_deg,
-                   vt.heading_deg, vt.timestamp, vt.nav_status,
-                   v.vessel_name, v.vessel_type, v.imo, v.flag, v.call_sign,
-                   v.length_m, v.gross_tonnage, v.data_mode
-            FROM ais_observations vt
-            LEFT JOIN vessels v ON vt.mmsi = v.mmsi
-            WHERE v.mmsi IS NOT NULL
-            ORDER BY vt.timestamp DESC
-        """).fetchall()
+        if spill_id:
+            from app.api.spills import _resolve_spill_id
+            resolved_id = _resolve_spill_id(spill_id, conn)
+            rows = conn.execute("""
+                SELECT vt.mmsi, vt.latitude, vt.longitude, vt.sog_knots, vt.cog_deg,
+                       vt.heading_deg, vt.timestamp, vt.nav_status,
+                       v.vessel_name, v.vessel_type, v.imo, v.flag, v.call_sign,
+                       v.length_m, v.gross_tonnage, v.data_mode
+                FROM ais_observations vt
+                LEFT JOIN vessels v ON vt.mmsi = v.mmsi
+                WHERE v.mmsi IS NOT NULL AND vt.mmsi IN (SELECT mmsi FROM vessel_tracks WHERE spill_id=?)
+                ORDER BY vt.timestamp DESC
+            """, (resolved_id,)).fetchall()
+            if not rows:
+                rows = conn.execute("""
+                    SELECT vt.mmsi, vt.latitude, vt.longitude, vt.sog_knots, vt.cog_deg,
+                           vt.heading_deg, vt.timestamp, vt.nav_status,
+                           v.vessel_name, v.vessel_type, v.imo, v.flag, v.call_sign,
+                           v.length_m, v.gross_tonnage, v.data_mode
+                    FROM ais_observations vt
+                    LEFT JOIN vessels v ON vt.mmsi = v.mmsi
+                    WHERE v.mmsi IS NOT NULL
+                    ORDER BY vt.timestamp DESC
+                """).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT vt.mmsi, vt.latitude, vt.longitude, vt.sog_knots, vt.cog_deg,
+                       vt.heading_deg, vt.timestamp, vt.nav_status,
+                       v.vessel_name, v.vessel_type, v.imo, v.flag, v.call_sign,
+                       v.length_m, v.gross_tonnage, v.data_mode
+                FROM ais_observations vt
+                LEFT JOIN vessels v ON vt.mmsi = v.mmsi
+                WHERE v.mmsi IS NOT NULL
+                ORDER BY vt.timestamp DESC
+            """).fetchall()
         # Deduplicate by MMSI, take most recent observation per vessel
         seen = {}
         for r in rows:

@@ -88,7 +88,7 @@ def get_vessel_attribution(mmsi: str, spill_id: str):
         resolved_spill_id = _resolve_spill_id(spill_id, conn)
         row = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi WHERE a.mmsi=? AND a.spill_id=?", (mmsi, resolved_spill_id)).fetchone()
         if not row:
-            row = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi WHERE a.mmsi=? ORDER BY a.attribution_score DESC LIMIT 1", (mmsi,)).fetchone()
+            row = conn.execute("SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag FROM attributions a JOIN vessels v ON a.mmsi=v.mmsi WHERE a.mmsi=? ORDER BY a.final_score DESC LIMIT 1", (mmsi,)).fetchone()
         if not row:
             raise HTTPException(404, "Attribution not found")
         d = row_to_dict(row)

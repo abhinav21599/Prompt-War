@@ -282,14 +282,6 @@ def get_hindcast(spill_id: str):
             (resolved_id, "hindcast")
         ).fetchone()
         if not row:
-            spill = conn.execute("SELECT data_mode FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
-            if spill:
-                _execute_full_analysis(resolved_id)
-                row = conn.execute(
-                    "SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type=? ORDER BY created_at DESC LIMIT 1",
-                    (resolved_id, "hindcast")
-                ).fetchone()
-        if not row:
             raise HTTPException(404, f"No hindcast found for incident {spill_id}.")
         d = row_to_dict(row)
         d["particles"] = parse_json(d["particles_json"])
@@ -408,14 +400,6 @@ def get_forecast(spill_id: str):
             (resolved_id, "forecast")
         ).fetchone()
         if not row:
-            spill = conn.execute("SELECT data_mode FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
-            if spill:
-                _execute_full_analysis(resolved_id)
-                row = conn.execute(
-                    "SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type=? ORDER BY created_at DESC LIMIT 1",
-                    (resolved_id, "forecast")
-                ).fetchone()
-        if not row:
             raise HTTPException(404, f"No forecast found for incident {spill_id}.")
         d = row_to_dict(row)
         d["particles"] = parse_json(d["particles_json"])
@@ -436,18 +420,6 @@ def get_spill_vessels(spill_id: str):
             WHERE a.spill_id=?
             ORDER BY a.rank
         """, (resolved_id,)).fetchall()
-
-        if not attrs:
-            spill = conn.execute("SELECT data_mode FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
-            if spill:
-                _execute_full_analysis(resolved_id)
-                attrs = conn.execute("""
-                    SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
-                    FROM attributions a
-                    JOIN vessels v ON a.mmsi=v.mmsi
-                    WHERE a.spill_id=?
-                    ORDER BY a.rank
-                """, (resolved_id,)).fetchall()
 
         if attrs:
             result = []
@@ -855,18 +827,16 @@ def get_spill_analysis_summary(spill_id: str):
     """
     conn = get_connection()
     try:
+        resolved_id = _resolve_spill_id(spill_id, conn)
         run = conn.execute(
             "SELECT * FROM analysis_runs WHERE spill_id=? ORDER BY started_at DESC LIMIT 1",
-            (spill_id,)
+            (resolved_id,)
         ).fetchone()
-        if not run:
-            # If not yet executed, execute it now to ensure availability
-            return _execute_full_analysis(spill_id)
 
-        spill = conn.execute("SELECT * FROM oil_spills WHERE id=?", (spill_id,)).fetchone()
-        attrs = conn.execute("SELECT * FROM attributions WHERE spill_id=? ORDER BY rank", (spill_id,)).fetchall()
-        hcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='hindcast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
-        fcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='forecast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
+        spill = conn.execute("SELECT * FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
+        attrs = conn.execute("SELECT * FROM attributions WHERE spill_id=? ORDER BY rank", (resolved_id,)).fetchall()
+        hcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='hindcast' ORDER BY created_at DESC LIMIT 1", (resolved_id,)).fetchone()
+        fcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='forecast' ORDER BY created_at DESC LIMIT 1", (resolved_id,)).fetchone()
 
         sp = row_to_dict(spill) if spill else {}
         poly = parse_json(sp.get("spill_polygon_geojson")) if sp else None
@@ -887,10 +857,11 @@ def get_spill_analysis_summary(spill_id: str):
                 {"factor": "ais_continuity", "label": "AIS continuity", "raw_value": r.get("ais_coverage_pct"), "raw_unit": "%", "normalized": r.get("norm_continuity"), "weight": weights.get("continuity", 0.10)},
             ]
 
+        run_d = row_to_dict(run) if run else {}
         return {
-            "run_id": dict(run)["id"],
-            "spill_id": spill_id,
-            "status": dict(run)["status"],
+            "run_id": run_d.get("id", f"RUN-{resolved_id}"),
+            "spill_id": resolved_id,
+            "status": run_d.get("status", "completed"),
             "detection": {
                 "confidence": sp.get("detection_confidence", 0.941),
                 "model_version": sp.get("model_version", "1.0.0-demo"),
@@ -909,7 +880,7 @@ def get_spill_analysis_summary(spill_id: str):
                 "provenance": "synthetic",
             },
             "forecast": {
-                "forecast_hours": hc.get("integration_hours"),
+                "forecast_hours": fc.get("integration_hours", 24.0),
                 "data_mode": "simulation",
                 "provenance": "synthetic",
             },
@@ -930,33 +901,24 @@ def get_spill_analysis_by_id(spill_id: str, target_id: str):
     """
     conn = get_connection()
     try:
+        resolved_id = _resolve_spill_id(spill_id, conn)
         attrs = conn.execute("""
             SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
             FROM attributions a
             JOIN vessels v ON a.mmsi=v.mmsi
             WHERE a.spill_id=?
             ORDER BY a.rank
-        """, (spill_id,)).fetchall()
+        """, (resolved_id,)).fetchall()
 
-        if not attrs:
-            summary = _execute_full_analysis(spill_id)
-            attrs = conn.execute("""
-                SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
-                FROM attributions a
-                JOIN vessels v ON a.mmsi=v.mmsi
-                WHERE a.spill_id=?
-                ORDER BY a.rank
-            """, (spill_id,)).fetchall()
-
-        spill = conn.execute("SELECT * FROM oil_spills WHERE id=?", (spill_id,)).fetchone()
+        spill = conn.execute("SELECT * FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
         sp = row_to_dict(spill) if spill else {}
         poly = parse_json(sp.get("spill_polygon_geojson")) if sp else None
         geom = characterize_polygon(poly) if poly else {}
 
-        hcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='hindcast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
+        hcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='hindcast' ORDER BY created_at DESC LIMIT 1", (resolved_id,)).fetchone()
         hc = row_to_dict(hcast) if hcast else {}
 
-        fcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='forecast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
+        fcast = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='forecast' ORDER BY created_at DESC LIMIT 1", (resolved_id,)).fetchone()
         fc = row_to_dict(fcast) if fcast else {}
 
         weights = settings.attribution_weights

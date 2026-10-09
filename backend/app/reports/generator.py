@@ -29,20 +29,6 @@ def generate_investigation_report(spill_id: str, conn) -> Dict[str, Any]:
     # Hindcast & Forecast
     hc_row = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='hindcast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
     fc_row = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='forecast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
-
-    if (not attr_rows or not hc_row) and sp.get("data_mode") == "simulation":
-        from app.api.spills import _execute_full_analysis
-        _execute_full_analysis(spill_id)
-        attr_rows = conn.execute("""
-            SELECT a.*, v.vessel_name, v.vessel_type, v.flag, v.length_m, v.gross_tonnage
-            FROM attributions a
-            JOIN vessels v ON a.mmsi = v.mmsi
-            WHERE a.spill_id=?
-            ORDER BY a.rank ASC
-        """, (spill_id,)).fetchall()
-        hc_row = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='hindcast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
-        fc_row = conn.execute("SELECT * FROM particle_trajectories WHERE spill_id=? AND run_type='forecast' ORDER BY created_at DESC LIMIT 1", (spill_id,)).fetchone()
-
     attributions = [row_to_dict(r) for r in attr_rows]
     hc = row_to_dict(hc_row) if hc_row else {}
     fc = row_to_dict(fc_row) if fc_row else {}

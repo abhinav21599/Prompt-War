@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { fetchAlerts as apiFetchAlerts, acknowledgeAlert as apiAcknowledgeAlert } from '../services/api';
 
 interface Alert {
   id: string;
@@ -29,12 +29,24 @@ export default function AlertCenterModal({
   const fetchAlerts = async () => {
     setLoading(true);
     try {
-      const res = await axios.get('/api/alerts');
-      const data = res.data?.alerts || res.data || [];
-      setAlerts(data);
-      if (onAlertCountChange) {
-        const active = data.filter((a: Alert) => a.status === 'active').length;
-        onAlertCountChange(active);
+      const data = await apiFetchAlerts();
+      if (Array.isArray(data) && data.length > 0) {
+        const normalized: Alert[] = data.map((a: any) => ({
+          id: a.id,
+          spill_id: a.spill_id,
+          severity: (a.severity || 'high').toLowerCase(),
+          title: a.title || a.incident_name || `Alert ${a.id}`,
+          message: a.message || `Telemetry alert for ${a.spill_id || 'incident'} with confidence ${(a.confidence ? (a.confidence * 100).toFixed(0) : 85)}%.`,
+          timestamp: a.timestamp || a.alert_time || a.created_at || new Date().toISOString(),
+          status: a.status || 'active',
+        }));
+        setAlerts(normalized);
+        if (onAlertCountChange) {
+          const active = normalized.filter((a) => a.status === 'active').length;
+          onAlertCountChange(active);
+        }
+      } else {
+        throw new Error('No alerts');
       }
     } catch {
       // Fallback alerts for demonstration
@@ -84,7 +96,7 @@ export default function AlertCenterModal({
 
   const handleAcknowledge = async (id: string) => {
     try {
-      await axios.post(`/api/alerts/${id}/acknowledge`);
+      await apiAcknowledgeAlert(id);
     } catch {
       // local optimistic update
     }

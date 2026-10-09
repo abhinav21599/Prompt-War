@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { fetchSpill, fetchSpillImage, getApiUrl } from "../services/api";
+import { fetchSpill, fetchSpillImage, getApiUrl, runSceneDetection } from "../services/api";
 import ProvenanceBadge from "../components/ProvenanceBadge";
 import ProcessingPipeline from "../components/ProcessingPipeline";
 import SarLimitation from "../components/SarLimitation";
@@ -42,11 +42,7 @@ export default function DetectionPage() {
   const handleRunDetector = async () => {
     setDetecting(true);
     try {
-      const res = await fetch("/api/scenes/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scene_id: selectedSceneId, threshold: 0.42 }),
-      }).then((r) => r.json());
+      const res = await runSceneDetection(selectedSceneId, 0.42);
       setSarMode("mask");
       if (res && res.confidence) {
         setSpill((prev: any) => ({

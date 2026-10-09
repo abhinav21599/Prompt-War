@@ -203,7 +203,7 @@ def analyze_attribution(payload: dict):
 def get_attribution(spill_id: str):
     conn = get_connection()
     try:
-        from app.api.spills import _resolve_spill_id, _execute_full_analysis
+        from app.api.spills import _resolve_spill_id
         resolved_id = _resolve_spill_id(spill_id, conn)
         rows = conn.execute("""
             SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
@@ -212,20 +212,17 @@ def get_attribution(spill_id: str):
             WHERE a.spill_id=?
             ORDER BY a.rank
         """, (resolved_id,)).fetchall()
-        if not rows:
-            spill_row = conn.execute("SELECT data_mode, provenance FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
-            if spill_row:
-                _execute_full_analysis(resolved_id)
-                rows = conn.execute("""
-                    SELECT a.*, v.vessel_name, v.vessel_type, v.imo, v.flag, v.length_m, v.gross_tonnage
-                    FROM attributions a
-                    JOIN vessels v ON a.mmsi=v.mmsi
-                    WHERE a.spill_id=?
-                    ORDER BY a.rank
-                """, (resolved_id,)).fetchall()
         result = [row_to_dict(r) for r in rows]
+        weights = settings.attribution_weights
         for r in result:
             r["behaviour_observations"] = parse_json(r.get("behaviour_observations_json")) or []
+            r["factors"] = [
+                {"factor": "spatial_proximity", "label": "Distance proximity", "raw_value": r.get("distance_km"), "raw_unit": "km", "normalized": r.get("norm_proximity"), "weight": weights.get("proximity", 0.35)},
+                {"factor": "temporal_alignment", "label": "Temporal alignment", "raw_value": r.get("time_delta_h"), "raw_unit": "h", "normalized": r.get("norm_temporal"), "weight": weights.get("temporal", 0.25)},
+                {"factor": "track_compatibility", "label": "Track compatibility", "raw_value": r.get("track_overlap_score"), "raw_unit": "score", "normalized": r.get("norm_trajectory"), "weight": weights.get("trajectory", 0.20)},
+                {"factor": "heading_compatibility", "label": "Heading compatibility", "raw_value": r.get("heading_compat_score"), "raw_unit": "score", "normalized": r.get("norm_heading"), "weight": weights.get("heading", 0.10)},
+                {"factor": "ais_continuity", "label": "AIS continuity", "raw_value": r.get("ais_coverage_pct"), "raw_unit": "%", "normalized": r.get("norm_continuity"), "weight": weights.get("continuity", 0.10)},
+            ]
         spill = conn.execute("SELECT data_mode, provenance FROM oil_spills WHERE id=?", (resolved_id,)).fetchone()
         sp_dict = row_to_dict(spill) if spill else {}
         mode_val = sp_dict.get("data_mode", "simulation")
@@ -233,6 +230,7 @@ def get_attribution(spill_id: str):
         return {
             "spill_id": resolved_id,
             "vessels": result,
+            "candidates": result,
             "count": len(result),
             "mode": mode_val,
             "data_mode": mode_val,
